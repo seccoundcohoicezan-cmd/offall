@@ -12,6 +12,8 @@ from typing import Any, Protocol
 
 from app.services.catalog import PROVIDERS
 
+NO_KEY = "local"  # stored for providers that don't need a key (Ollama, keyless 9Router)
+
 
 class LLMError(Exception):
     pass
@@ -129,8 +131,10 @@ class LiteLLMClient:
             "stream_options": {"include_usage": True},
             "num_retries": 0,
         }
-        if req.api_key and spec.needs_key:
+        if req.api_key and (spec.needs_key or req.api_key != NO_KEY):
             kwargs["api_key"] = req.api_key
+        elif spec.litellm_prefix == "openai":
+            kwargs["api_key"] = "sk-no-key"  # OpenAI client insists on a value; keyless gateways ignore it
         if req.base_url or spec.default_base_url:
             kwargs["api_base"] = req.base_url or spec.default_base_url
         try:

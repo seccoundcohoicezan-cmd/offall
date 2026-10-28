@@ -4,7 +4,18 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
-ProviderName = Literal["anthropic", "openai", "gemini", "groq", "openrouter", "mistral", "ollama", "mock"]
+ProviderName = Literal[
+    "anthropic",
+    "openai",
+    "gemini",
+    "groq",
+    "openrouter",
+    "mistral",
+    "ollama",
+    "9router",
+    "openai_compatible",
+    "mock",
+]
 Strategy = Literal["fill_first", "round_robin", "least_used"]
 SaveMode = Literal["off", "normal", "aggressive"]
 
@@ -78,6 +89,9 @@ class SettingsIn(BaseModel):
     system_prompt: str | None = Field(default=None, max_length=8000)
     notify_telegram_chat_id: str | None = Field(default=None, max_length=64)
     notify_webpush: bool | None = None
+    memory_enabled: bool | None = None
+    memory_auto_extract: bool | None = None
+    memory_review: bool | None = None
 
 
 class SettingsOut(BaseModel):
@@ -89,6 +103,9 @@ class SettingsOut(BaseModel):
     system_prompt: str
     notify_telegram_chat_id: str
     notify_webpush: bool
+    memory_enabled: bool
+    memory_auto_extract: bool
+    memory_review: bool
     vapid_public_key: str
     telegram_enabled: bool
 
@@ -235,6 +252,7 @@ class MessageOut(ORM):
     tokens_out: int
     tokens_saved: int
     cached: bool
+    memories_used: int = 0
     created_at: datetime
 
 
@@ -270,3 +288,73 @@ class Page[T](BaseModel):
 class PushSubIn(BaseModel):
     endpoint: str = Field(max_length=1000)
     keys: dict[str, str]
+
+
+MemoryKindName = Literal["fact", "preference", "context"]
+
+
+class MemoryIn(BaseModel):
+    content: str = Field(min_length=3, max_length=300)
+    kind: MemoryKindName = "fact"
+    pinned: bool = False
+
+
+class MemoryPatch(BaseModel):
+    content: str | None = Field(default=None, min_length=3, max_length=300)
+    kind: MemoryKindName | None = None
+    pinned: bool | None = None
+    status: Literal["active", "rejected"] | None = None
+
+
+class MemoryOut(ORM):
+    id: uuid.UUID
+    kind: str
+    content: str
+    source: str
+    status: str
+    pinned: bool
+    use_count: int
+    last_used_at: datetime | None
+    source_chat_id: uuid.UUID | None
+    created_at: datetime
+    updated_at: datetime | None
+
+
+class ProfileOut(BaseModel):
+    summary: str
+    updated_at: str | None
+    active: int
+    pending: int
+
+
+class HistoryHitOut(BaseModel):
+    chat_id: uuid.UUID
+    chat_title: str
+    message_id: uuid.UUID
+    role: str
+    snippet: str
+    created_at: datetime
+
+
+class AuditOut(ORM):
+    id: uuid.UUID
+    user_id: uuid.UUID | None
+    actor: str
+    action: str
+    target: str
+    detail: dict[str, object]
+    created_at: datetime
+
+
+class CustomModelIn(BaseModel):
+    model_name: str = Field(min_length=1, max_length=200)
+    display_name: str = Field(default="", max_length=200)
+    tier: Literal["strong", "cheap"] = "cheap"
+    cost_in: float = Field(default=0.0, ge=0)
+    cost_out: float = Field(default=0.0, ge=0)
+    context_window: int = Field(default=128_000, ge=1024)
+
+
+class ModelSyncOut(BaseModel):
+    added: list[str]
+    total: int

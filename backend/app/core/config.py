@@ -26,6 +26,10 @@ class Settings(BaseSettings):
 
     enable_mock_provider: bool = False
 
+    # Optional external memory backend (built-in DB memory always stays on).
+    memory_external_url: str = ""
+    memory_external_token: str = ""
+
     max_message_chars: int = 20_000
     max_chats_per_user: int = 500
     max_parallel_jobs_per_user: int = 3

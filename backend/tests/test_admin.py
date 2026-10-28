@@ -11,8 +11,8 @@ async def test_only_admin_can_manage_users(client):
     admin, member = await _pair(client)
     assert (await client.get("/api/v1/admin/users", headers=member)).status_code == 403
     page = (await client.get("/api/v1/admin/users", headers=admin)).json()
-    assert [u["email"] for u in page["items"]] == ["owner@example.com", "member@example.com"]
-    assert page["items"][0]["role"] == "admin"
+    assert [u["email"] for u in page["items"]] == ["member@example.com", "owner@example.com"]
+    assert page["items"][1]["role"] == "admin"
     found = (await client.get("/api/v1/admin/users?q=memb", headers=admin)).json()
     assert found["total"] == 1
 

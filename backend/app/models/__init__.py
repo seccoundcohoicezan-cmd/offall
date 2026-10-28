@@ -60,6 +60,9 @@ def default_settings() -> dict[str, Any]:
         "system_prompt": "",
         "notify_telegram_chat_id": "",
         "notify_webpush": False,
+        "memory_enabled": True,
+        "memory_auto_extract": True,
+        "memory_review": False,
     }
 
 
@@ -169,6 +172,7 @@ class Message(IdMixin, CreatedMixin, Base):
     tokens_out: Mapped[int] = mapped_column(Integer, default=0)
     tokens_saved: Mapped[int] = mapped_column(Integer, default=0)
     cached: Mapped[bool] = mapped_column(Boolean, default=False)
+    memories_used: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
 
 class Job(IdMixin, CreatedMixin, Base):
@@ -227,3 +231,47 @@ class PushSubscription(IdMixin, CreatedMixin, Base):
     user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
     endpoint: Mapped[str] = mapped_column(String(1000), unique=True)
     keys: Mapped[dict[str, str]] = mapped_column(JSON)
+
+
+class MemoryKind(enum.StrEnum):
+    fact = "fact"
+    preference = "preference"
+    context = "context"
+
+
+class MemoryStatus(enum.StrEnum):
+    active = "active"
+    pending = "pending"  # auto-extracted, waiting for the user's review
+    rejected = "rejected"
+
+
+class Memory(IdMixin, CreatedMixin, Base):
+    """Long-lived knowledge about a user, shared across all of their chats."""
+
+    __tablename__ = "memories"
+    __table_args__ = (Index("ix_memories_user_status", "user_id", "status"),)
+    user_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    kind: Mapped[str] = mapped_column(String(20), default=MemoryKind.fact)
+    content: Mapped[str] = mapped_column(String(500))
+    source: Mapped[str] = mapped_column(String(20), default="manual")  # manual | auto
+    status: Mapped[str] = mapped_column(String(20), default=MemoryStatus.active)
+    pinned: Mapped[bool] = mapped_column(Boolean, default=False)
+    embedding: Mapped[list[float]] = mapped_column(JSON)
+    use_count: Mapped[int] = mapped_column(Integer, default=0)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    source_chat_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class AuditLog(IdMixin, CreatedMixin, Base):
+    """Append-only record of what the agent, the user or an admin changed."""
+
+    __tablename__ = "audit_logs"
+    __table_args__ = (Index("ix_audit_user_created", "user_id", "created_at"),)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    actor: Mapped[str] = mapped_column(String(20))  # user | agent | admin | system
+    action: Mapped[str] = mapped_column(String(60))
+    target: Mapped[str] = mapped_column(String(120), default="")
+    detail: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)

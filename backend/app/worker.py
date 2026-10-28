@@ -26,12 +26,27 @@ async def startup(ctx: dict[str, Any]) -> None:
     settings = get_settings()
     sessions = get_session_factory()
     ctx["sessions"] = sessions
-    ctx["runner"] = build_runner(sessions, ctx["redis"], settings)
+    redis = ctx["redis"]
+
+    async def enqueue(name: str, arg: str) -> None:
+        await redis.enqueue_job(name, arg, _job_id=f"{name}:{arg}")
+
+    ctx["runner"] = build_runner(sessions, redis, settings, enqueue=enqueue)
 
 
 async def run_job(ctx: dict[str, Any], job_id: str) -> str:
     runner: JobRunner = ctx["runner"]
     return await runner.run(uuid.UUID(job_id))
+
+
+async def learn_from_job(ctx: dict[str, Any], job_id: str) -> int:
+    runner: JobRunner = ctx["runner"]
+    return await runner.learn(uuid.UUID(job_id))
+
+
+async def rebuild_profile(ctx: dict[str, Any], user_id: str) -> str | None:
+    runner: JobRunner = ctx["runner"]
+    return await runner.rebuild_profile(uuid.UUID(user_id))
 
 
 async def resume_waiting(ctx: dict[str, Any]) -> int:
@@ -59,7 +74,7 @@ async def _requeue_stale_running(sessions: Any) -> None:
 
 
 class WorkerSettings:
-    functions = [run_job]
+    functions = [run_job, learn_from_job, rebuild_profile]
     cron_jobs = [cron(resume_waiting, second={0, 30}, run_at_startup=True)]
     on_startup = startup
     redis_settings = RedisSettings.from_dsn(get_settings().redis_url)

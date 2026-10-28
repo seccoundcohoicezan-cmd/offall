@@ -10,6 +10,7 @@ from app.services.events import JobEvents
 from app.services.jobs import JobRunner
 from app.services.key_pool import KeyPool
 from app.services.llm import LiteLLMClient, LLMClient, MockLLMClient, RoutingLLMClient
+from app.services.memory import HttpMemoryStore
 from app.services.notify import Event, Notifier, build_notifier
 
 
@@ -24,6 +25,8 @@ def build_runner(
     settings: Settings,
     llm: LLMClient | None = None,
     notifier: Notifier | None = None,
+    enqueue: Any = None,
+    external_memory: Any = None,
     **pool_options: Any,
 ) -> JobRunner:
     notifier = notifier or build_notifier(sessions, settings)
@@ -58,4 +61,14 @@ def build_runner(
         on_invalid=on_invalid,
         **options,
     )
-    return JobRunner(sessions, pool, JobEvents(redis, settings.stream_ttl_seconds), notifier, settings)
+    if external_memory is None and settings.memory_external_url:
+        external_memory = HttpMemoryStore(settings.memory_external_url, settings.memory_external_token)
+    return JobRunner(
+        sessions,
+        pool,
+        JobEvents(redis, settings.stream_ttl_seconds),
+        notifier,
+        settings,
+        external_memory=external_memory,
+        enqueue=enqueue,
+    )

@@ -1,6 +1,7 @@
 import uuid
 
-from fastapi import APIRouter
+import httpx
+from fastapi import APIRouter, Request
 from sqlalchemy import func, select
 
 from app.core.deps import DB, AppSettings, Cipher, CurrentUser
@@ -8,10 +9,21 @@ from app.core.encryption import mask_key
 from app.core.errors import ApiError, not_found
 from app.db.base import utcnow
 from app.models import AIModel, KeyStatus, Provider, ProviderKey
-from app.schemas import KeyIn, KeyOut, KeyPatch, KeyTestOut, ProviderIn, ProviderOut, ProviderPatch
+from app.schemas import (
+    CustomModelIn,
+    KeyIn,
+    KeyOut,
+    KeyPatch,
+    KeyTestOut,
+    ModelSyncOut,
+    ProviderIn,
+    ProviderOut,
+    ProviderPatch,
+)
+from app.services import audit
 from app.services.catalog import PROVIDERS
 from app.services.key_pool import is_usable
-from app.services.llm import InvalidKey, LLMError, QuotaExhausted, RateLimited, StreamRequest, Usage
+from app.services.llm import NO_KEY, InvalidKey, LLMError, QuotaExhausted, RateLimited, StreamRequest, Usage
 
 router = APIRouter(prefix="/providers", tags=["providers"])
 MAX_KEYS_PER_PROVIDER = 50
@@ -66,7 +78,9 @@ async def list_providers(db: DB, user: CurrentUser) -> list[ProviderOut]:
 
 
 @router.post("", response_model=ProviderOut, status_code=201)
-async def create_provider(body: ProviderIn, db: DB, user: CurrentUser, settings: AppSettings) -> ProviderOut:
+async def create_provider(
+    body: ProviderIn, db: DB, user: CurrentUser, settings: AppSettings, cipher: Cipher
+) -> ProviderOut:
     if body.name == "mock" and not settings.enable_mock_provider:
         raise ApiError(400, "provider_disabled", "Provider mock tidak aktif di server ini.")
     exists = await db.scalar(select(Provider).where(Provider.user_id == user.id, Provider.name == body.name))
@@ -77,7 +91,19 @@ async def create_provider(body: ProviderIn, db: DB, user: CurrentUser, settings:
     )
     db.add(provider)
     await db.flush()
-    for spec in PROVIDERS[body.name].models:
+    spec_info = PROVIDERS[body.name]
+    if not spec_info.needs_key:
+        # Keyless gateways (Ollama, 9Router without auth) work right away; a real key can be added later.
+        db.add(
+            ProviderKey(
+                provider_id=provider.id,
+                label="Default (tanpa key)",
+                api_key_encrypted=cipher.encrypt(NO_KEY),
+                key_hint="tanpa key",
+                priority=0,
+            )
+        )
+    for spec in spec_info.models:
         db.add(
             AIModel(
                 provider_id=provider.id,
@@ -90,7 +116,7 @@ async def create_provider(body: ProviderIn, db: DB, user: CurrentUser, settings:
             )
         )
     await db.commit()
-    return _out(provider, [])
+    return _out(provider, (await _keys(db, [provider.id]))[provider.id])
 
 
 @router.patch("/{provider_id}", response_model=ProviderOut)
@@ -135,12 +161,14 @@ async def add_key(
     key = ProviderKey(
         provider_id=provider.id,
         label=body.label,
-        api_key_encrypted=cipher.encrypt(secret or "local"),
-        key_hint=mask_key(secret) if secret else "lokal",
+        api_key_encrypted=cipher.encrypt(secret or NO_KEY),
+        key_hint=mask_key(secret) if secret else "tanpa key",
         priority=priority,
         daily_token_quota=body.daily_token_quota,
     )
     db.add(key)
+    await db.flush()
+    audit.record(db, user.id, "user", "key.create", str(key.id), provider=provider.name, hint=key.key_hint)
     await db.commit()
     return key
 
@@ -179,7 +207,8 @@ async def patch_key(
 
 @router.delete("/{provider_id}/keys/{key_id}", status_code=204)
 async def delete_key(provider_id: uuid.UUID, key_id: uuid.UUID, db: DB, user: CurrentUser) -> None:
-    _, key = await _owned_key(db, user.id, provider_id, key_id)
+    provider, key = await _owned_key(db, user.id, provider_id, key_id)
+    audit.record(db, user.id, "user", "key.delete", str(key.id), provider=provider.name, hint=key.key_hint)
     await db.delete(key)
     await db.commit()
 
@@ -230,3 +259,104 @@ async def test_key(
     key.last_error = None
     await db.commit()
     return KeyTestOut(ok=True, status=key.status, message="Koneksi berhasil.")
+
+
+STRONG_HINTS = (
+    "opus",
+    "sonnet",
+    "gpt-4",
+    "gpt-5",
+    "o1",
+    "o3",
+    "pro",
+    "large",
+    "70b",
+    "405b",
+    "r1",
+    "qwen3-coder",
+)
+
+
+CHEAP_HINTS = ("mini", "nano", "flash", "haiku", "small", "lite", "8b", "7b", "3b", "instant", "free")
+
+
+def guess_tier(name: str) -> str:
+    low = name.lower()
+    if any(h in low for h in CHEAP_HINTS):
+        return "cheap"
+    return "strong" if any(h in low for h in STRONG_HINTS) else "cheap"
+
+
+@router.post("/{provider_id}/models", status_code=201)
+async def add_model(provider_id: uuid.UUID, body: CustomModelIn, db: DB, user: CurrentUser) -> dict[str, str]:
+    provider = await _owned(db, user.id, provider_id)
+    name = body.model_name.strip()
+    exists = await db.scalar(
+        select(AIModel).where(AIModel.provider_id == provider.id, AIModel.model_name == name)
+    )
+    if exists:
+        raise ApiError(409, "model_exists", "Model ini sudah ada.")
+    db.add(
+        AIModel(
+            provider_id=provider.id,
+            model_name=name,
+            display_name=body.display_name.strip() or name,
+            tier=body.tier,
+            cost_in=body.cost_in,
+            cost_out=body.cost_out,
+            context_window=body.context_window,
+        )
+    )
+    await db.commit()
+    return {"id": f"{provider.name}/{name}"}
+
+
+@router.delete("/{provider_id}/models/{model_name:path}", status_code=204)
+async def delete_model(provider_id: uuid.UUID, model_name: str, db: DB, user: CurrentUser) -> None:
+    provider = await _owned(db, user.id, provider_id)
+    model = await db.scalar(
+        select(AIModel).where(AIModel.provider_id == provider.id, AIModel.model_name == model_name)
+    )
+    if model is None:
+        raise ApiError(404, "not_found", "model not found")
+    await db.delete(model)
+    await db.commit()
+
+
+@router.post("/{provider_id}/models/sync", response_model=ModelSyncOut)
+async def sync_models(
+    provider_id: uuid.UUID, db: DB, user: CurrentUser, cipher: Cipher, request: Request
+) -> ModelSyncOut:
+    """Reads GET {base_url}/models (OpenAI format) from gateways like 9Router.
+    A plain metadata read: no completion is run, so it is fine inside the request."""
+    provider = await _owned(db, user.id, provider_id)
+    spec = PROVIDERS[provider.name]
+    base = (provider.base_url or spec.default_base_url or "").rstrip("/")
+    if not base:
+        raise ApiError(400, "no_base_url", "Isi Base URL provider dulu.")
+    key = await db.scalar(
+        select(ProviderKey)
+        .where(ProviderKey.provider_id == provider.id, ProviderKey.status != KeyStatus.disabled)
+        .order_by(ProviderKey.priority)
+    )
+    secret = cipher.decrypt(key.api_key_encrypted) if key else NO_KEY
+    headers = {"Authorization": f"Bearer {secret}"} if secret != NO_KEY else {}
+    transport = getattr(request.app.state, "http_transport", None)
+    try:
+        async with httpx.AsyncClient(timeout=15, transport=transport) as client:
+            resp = await client.get(f"{base}/models", headers=headers)
+            resp.raise_for_status()
+            names = [str(m["id"]) for m in resp.json().get("data", []) if m.get("id")]
+    except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
+        raise ApiError(
+            502, "sync_failed", f"Gagal membaca daftar model dari {base}: {type(exc).__name__}"
+        ) from exc
+    existing = set(
+        (await db.scalars(select(AIModel.model_name).where(AIModel.provider_id == provider.id))).all()
+    )
+    added = [n for n in dict.fromkeys(names) if n not in existing][:300]
+    for name in added:
+        db.add(AIModel(provider_id=provider.id, model_name=name, display_name=name, tier=guess_tier(name)))
+    audit.record(db, user.id, "user", "provider.sync_models", str(provider.id), added=len(added))
+    await db.commit()
+    return ModelSyncOut(added=added, total=len(existing) + len(added))

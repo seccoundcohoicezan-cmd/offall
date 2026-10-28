@@ -23,6 +23,8 @@ class ProviderSpec:
     litellm_prefix: str
     needs_key: bool = True
     default_base_url: str | None = None
+    # Gateways like 9Router expose their own model list; models are synced or added by hand.
+    custom_models: bool = False
     models: tuple[ModelSpec, ...] = field(default_factory=tuple)
 
 
@@ -94,6 +96,21 @@ PROVIDERS: dict[str, ProviderSpec] = {
             needs_key=False,
             default_base_url="http://host.docker.internal:11434",
             models=(ModelSpec("llama3.1", "Llama 3.1 (Ollama)", "cheap", context=8192),),
+        ),
+        ProviderSpec(
+            "9router",
+            "9Router (OpenAI-compatible)",
+            "openai",
+            needs_key=False,
+            default_base_url="http://host.docker.internal:20128/v1",
+            custom_models=True,
+        ),
+        ProviderSpec(
+            "openai_compatible",
+            "OpenAI-compatible (custom)",
+            "openai",
+            needs_key=False,
+            custom_models=True,
         ),
         ProviderSpec(
             "mock",

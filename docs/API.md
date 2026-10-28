@@ -24,6 +24,9 @@ Interactive docs: `/docs` on the API service (internal; not proxied by the front
 | PATCH | `/api/v1/providers/{provider_id}/keys/{key_id}` | yes | Patch Key |
 | DELETE | `/api/v1/providers/{provider_id}/keys/{key_id}` | yes | Delete Key |
 | POST | `/api/v1/providers/{provider_id}/keys/{key_id}/test` | yes | Test Key |
+| POST | `/api/v1/providers/{provider_id}/models` | yes | Add Model |
+| DELETE | `/api/v1/providers/{provider_id}/models/{model_name}` | yes | Delete Model |
+| POST | `/api/v1/providers/{provider_id}/models/sync` | yes | Reads GET {base_url}/models (OpenAI format) from gateways like 9Router. |
 | GET | `/api/v1/models` | yes | Models whose provider has at least one active key (all models with include_all=true). |
 | PATCH | `/api/v1/models/{provider_id}/{model_name}` | yes | Toggle Model |
 | GET | `/api/v1/agents` | yes | List Agents |
@@ -52,6 +55,14 @@ Interactive docs: `/docs` on the API service (internal; not proxied by the front
 | DELETE | `/api/v1/admin/users/{user_id}` | yes | Delete User |
 | GET | `/api/v1/admin/settings` | yes | Get Instance Settings |
 | PATCH | `/api/v1/admin/settings` | yes | Patch Instance Settings |
+| GET | `/api/v1/memories` | yes | List Memories |
+| POST | `/api/v1/memories` | yes | Create Memory |
+| PATCH | `/api/v1/memories/{memory_id}` | yes | Patch Memory |
+| DELETE | `/api/v1/memories/{memory_id}` | yes | Delete Memory |
+| GET | `/api/v1/memories/profile` | yes | Get Profile |
+| POST | `/api/v1/memories/profile/rebuild` | yes | The model call happens in the worker, never inside the HTTP request. |
+| GET | `/api/v1/search/messages` | yes | Search Messages |
+| GET | `/api/v1/audit` | yes | List Audit |
 | GET | `/health` | - | Health |
 | GET | `/api/v1/health` | - | Health |
 

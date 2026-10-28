@@ -5,7 +5,7 @@ from typing import Any
 from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import admin, agents, auth, chats, health, jobs, models, providers, settings, usage
+from app.api import admin, agents, auth, chats, health, jobs, memory, models, providers, settings, usage
 from app.core.config import Settings, get_settings
 from app.core.errors import install_error_handlers
 from app.core.logging import setup_logging
@@ -60,7 +60,7 @@ def create_app(redis: Any = None, queue: Any = None) -> FastAPI:
         allow_headers=["Authorization", "Content-Type", "Last-Event-ID"],
     )
     api = APIRouter(prefix="/api/v1")
-    for module in (auth, providers, models, agents, chats, jobs, usage, settings, admin):
+    for module in (auth, providers, models, agents, chats, jobs, usage, settings, admin, memory):
         api.include_router(module.router)
     app.include_router(api)
     app.include_router(health.router)

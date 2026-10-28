@@ -3,6 +3,7 @@
 import logging
 import time
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
@@ -19,13 +20,15 @@ from app.models import (
     Chat,
     Job,
     JobStatus,
+    Memory,
+    MemoryStatus,
     Message,
     Provider,
     ProviderKey,
     UsageLog,
     User,
 )
-from app.services import router, semantic_cache, summarizer, token_saver
+from app.services import audit, memory, router, semantic_cache, summarizer, token_saver
 from app.services.events import JobEvents
 from app.services.key_pool import RECOVERABLE, KeyPool, NoKeyAvailable
 from app.services.llm import LLMError
@@ -53,6 +56,7 @@ class _Context:
     history: list[dict[str, Any]]
     mode: str
     plans: list[_Plan] = field(default_factory=list)
+    memories_used: int = 0
 
 
 class JobRunner:
@@ -63,12 +67,16 @@ class JobRunner:
         events: JobEvents,
         notifier: Notifier,
         settings: Settings,
+        external_memory: memory.ExternalStore | None = None,
+        enqueue: Callable[[str, str], Awaitable[Any]] | None = None,
     ) -> None:
         self.sessions = sessions
         self.pool = pool
         self.events = events
         self.notifier = notifier
         self.settings = settings
+        self.external_memory = external_memory
+        self.enqueue = enqueue
 
     async def run(self, job_id: uuid.UUID) -> str:
         if not await self._claim(job_id):
@@ -120,22 +128,46 @@ class JobRunner:
             parts = [str(user.settings.get("system_prompt") or "").strip()]
             if agent is not None and agent.is_enabled:
                 parts.append(f"Kamu adalah agent bernama {agent.name}.\n{agent.instructions}".strip())
+            prompt = history[-1]["content"] if history else ""
+            memories_used = 0
+            if memory.settings_of(user)["enabled"] and prompt:
+                block, memories_used = await self._memory_context(session, user, chat.id, str(prompt))
+                parts.append(block)
+                await session.commit()
             system_prompt = "\n\n".join(p for p in parts if p)
             mode = (
                 chat.mode
                 if chat.mode in token_saver.MODES
                 else str(user.settings.get("save_mode") or "normal")
             )
-            ctx = _Context(job, user, chat, system_prompt, history, mode)
-            ctx.plans = await self._plans(session, ctx)
+            ctx = _Context(job, user, chat, system_prompt, history, mode, memories_used=memories_used)
+            ctx.plans = await self._plans(session, user, job.model_requested, str(prompt))
             return ctx
 
-    async def _plans(self, session: Any, ctx: _Context) -> list[_Plan]:
+    async def _memory_context(
+        self, session: Any, user: User, chat_id: uuid.UUID, prompt: str
+    ) -> tuple[str, int]:
+        mems = await memory.relevant(session, user.id, prompt)
+        hits = (
+            await memory.search_history(session, user.id, prompt, limit=5, exclude_chat_id=chat_id)
+            if memory.wants_recall(prompt)
+            else []
+        )
+        external = (
+            await self.external_memory.search(user.id, prompt, memory.MAX_INJECTED)
+            if self.external_memory
+            else []
+        )
+        profile = str((user.settings or {}).get("memory_profile") or "")
+        block = memory.context_block(profile, mems, external, hits)
+        return block, len(mems) + len(external) + len(hits)
+
+    async def _plans(self, session: Any, user: User, requested: str, prompt: str) -> list[_Plan]:
         rows = (
             await session.execute(
                 select(AIModel, Provider)
                 .join(Provider, Provider.id == AIModel.provider_id)
-                .where(Provider.user_id == ctx.user.id, AIModel.is_enabled.is_(True))
+                .where(Provider.user_id == user.id, AIModel.is_enabled.is_(True))
             )
         ).all()
         with_keys = set(
@@ -143,7 +175,7 @@ class JobRunner:
                 await session.scalars(
                     select(ProviderKey.provider_id)
                     .join(Provider, Provider.id == ProviderKey.provider_id)
-                    .where(Provider.user_id == ctx.user.id)
+                    .where(Provider.user_id == user.id)
                     .where(ProviderKey.status.in_(RECOVERABLE))
                 )
             ).all()
@@ -156,13 +188,12 @@ class JobRunner:
                 continue
             cand = router.Candidate(provider.name, model.model_name, model.tier)
             by_ref[cand.ref] = _Plan(cand, provider, model)
-        prompt = str(ctx.history[-1]["content"]) if ctx.history else ""
         ordered = router.plan(
-            ctx.job.model_requested,
+            requested,
             prompt,
             [p.candidate for p in by_ref.values()],
-            list(ctx.user.settings.get("fallback_order") or []),
-            bool(ctx.user.settings.get("allow_fallback", True)),
+            list(user.settings.get("fallback_order") or []),
+            bool(user.settings.get("allow_fallback", True)),
         )
         return [by_ref[c.ref] for c in ordered]
 
@@ -252,7 +283,21 @@ class JobRunner:
             return ctx.chat.summary if ctx.chat.summary_upto else None
         turns = ctx.history[ctx.chat.summary_upto : upto]
         request = summarizer.build_request(ctx.chat.summary, turns)
-        cheap = sorted(ctx.plans, key=lambda p: (p.candidate.tier != "cheap", p.model.cost_out))
+        summary = await self._cheap_call(ctx.plans, request, 400)
+        if summary is None:
+            return ctx.chat.summary
+        async with self.sessions() as session:
+            await session.execute(
+                update(Chat).where(Chat.id == ctx.chat.id).values(summary=summary, summary_upto=upto)
+            )
+            await session.commit()
+        return summary
+
+    async def _cheap_call(
+        self, plans: list[_Plan], request: list[dict[str, Any]], max_tokens: int
+    ) -> str | None:
+        """One non-streamed call on the cheapest available model (summaries, memory)."""
+        cheap = sorted(plans, key=lambda p: (p.candidate.tier != "cheap", p.model.cost_out))
         for plan in cheap[:2]:
             chunks: list[str] = []
 
@@ -260,17 +305,84 @@ class JobRunner:
                 sink.append(text)
 
             try:
-                await self.pool.stream(plan.provider, plan.candidate.model_name, request, 400, collect)
+                await self.pool.stream(plan.provider, plan.candidate.model_name, request, max_tokens, collect)
             except (NoKeyAvailable, LLMError):
                 continue
-            summary = "".join(chunks).strip()
-            async with self.sessions() as session:
-                await session.execute(
-                    update(Chat).where(Chat.id == ctx.chat.id).values(summary=summary, summary_upto=upto)
+            return "".join(chunks).strip()
+        return None
+
+    async def learn(self, job_id: uuid.UUID) -> int:
+        """Experimental self-learning step, run as its own background task after an
+        answer: extract durable facts about the user from that exchange."""
+        async with self.sessions() as session:
+            job = await session.get(Job, job_id)
+            if job is None or job.status != JobStatus.done or job.result_message_id is None:
+                return 0
+            user = await session.get(User, job.user_id)
+            prompt_msg = await session.get(Message, job.user_message_id)
+            answer_msg = await session.get(Message, job.result_message_id)
+            if user is None or prompt_msg is None or answer_msg is None:
+                return 0
+            prefs = memory.settings_of(user)
+            if not (prefs["enabled"] and prefs["auto"]):
+                return 0
+            plans = await self._plans(session, user, "auto", prompt_msg.content)
+        raw = await self._cheap_call(
+            plans, memory.extraction_request(prompt_msg.content, answer_msg.content), 300
+        )
+        items = memory.parse_extraction(raw or "")
+        if not items:
+            return 0
+        status = MemoryStatus.pending if prefs["review"] else MemoryStatus.active
+        created = 0
+        async with self.sessions() as session:
+            for item in items:
+                mem, is_new = await memory.remember(
+                    session,
+                    user.id,
+                    item["content"],
+                    item["kind"],
+                    "auto",
+                    status,
+                    job.chat_id,
+                    actor="agent",
                 )
-                await session.commit()
-            return summary
-        return ctx.chat.summary
+                created += int(is_new)
+                if is_new and status == MemoryStatus.active and self.external_memory:
+                    await self.external_memory.add(user.id, mem.content, mem.kind)
+            await session.commit()
+        if created and status == MemoryStatus.active:
+            await self.rebuild_profile(user.id, plans)
+        return created
+
+    async def rebuild_profile(self, user_id: uuid.UUID, plans: list[_Plan] | None = None) -> str | None:
+        """Refresh the short user model that is injected into every chat."""
+        async with self.sessions() as session:
+            user = await session.get(User, user_id)
+            if user is None:
+                return None
+            mems = (
+                await session.scalars(
+                    select(Memory)
+                    .where(Memory.user_id == user_id, Memory.status == MemoryStatus.active)
+                    .order_by(Memory.pinned.desc(), Memory.use_count.desc(), Memory.created_at.desc())
+                    .limit(40)
+                )
+            ).all()
+            if plans is None:
+                plans = await self._plans(session, user, "auto", "ringkas profil")
+            if not mems:
+                text = ""
+            else:
+                text = await self._cheap_call(plans, memory.profile_request(list(mems)), 250) or ""
+            user.settings = {
+                **(user.settings or {}),
+                "memory_profile": text,
+                "memory_profile_at": utcnow().isoformat(),
+            }
+            audit.record(session, user_id, "agent", "memory.profile_rebuild", "", memories=len(mems))
+            await session.commit()
+            return text
 
     async def _save_partial(self, job_id: uuid.UUID, output: str) -> None:
         async with self.sessions() as session:
@@ -301,6 +413,9 @@ class JobRunner:
             cached=False,
             cancelled=cancelled,
         )
+        prefs = memory.settings_of(ctx.user)
+        if status == JobStatus.done and self.enqueue and prefs["enabled"] and prefs["auto"]:
+            await self.enqueue("learn_from_job", str(ctx.job.id))
         if status == JobStatus.done and ctx.mode != "off" and len(ctx.history) == 1 and output:
             scope = semantic_cache.scope_for(ctx.job.model_requested, ctx.system_prompt)
             async with self.sessions() as session:
@@ -345,6 +460,7 @@ class JobRunner:
                     tokens_out=tokens_out,
                     tokens_saved=tokens_saved,
                     cached=cached,
+                    memories_used=ctx.memories_used,
                     created_at=now,
                 )
                 session.add(msg)

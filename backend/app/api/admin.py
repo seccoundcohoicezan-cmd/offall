@@ -19,7 +19,7 @@ from app.schemas import (
     InstanceSettingsPatch,
     Page,
 )
-from app.services import app_settings
+from app.services import app_settings, audit
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -72,13 +72,13 @@ async def list_users(
         like = f"%{q.strip().lower()}%"
         base = base.where(or_(func.lower(User.email).like(like), func.lower(User.display_name).like(like)))
     total = await db.scalar(select(func.count()).select_from(base.subquery())) or 0
-    users = (await db.scalars(base.order_by(User.created_at).limit(limit).offset(offset))).all()
+    users = (await db.scalars(base.order_by(User.created_at.desc()).limit(limit).offset(offset))).all()
     stats = await _stats(db, [u.id for u in users])
     return Page(items=[_out(u, stats[u.id]) for u in users], total=total, limit=limit, offset=offset)
 
 
 @router.post("/users", response_model=AdminUserOut, status_code=201)
-async def create_user(body: AdminUserIn, db: DB, _: AdminUser) -> AdminUserOut:
+async def create_user(body: AdminUserIn, db: DB, admin: AdminUser) -> AdminUserOut:
     email = body.email.lower()
     if await db.scalar(select(User.id).where(User.email == email)):
         raise ApiError(409, "email_taken", "Email sudah terdaftar.")
@@ -89,6 +89,8 @@ async def create_user(body: AdminUserIn, db: DB, _: AdminUser) -> AdminUserOut:
         display_name=body.display_name,
     )
     db.add(user)
+    await db.flush()
+    audit.record(db, user.id, "admin", "admin.user_create", user.email, by=str(admin.id), role=body.role)
     await db.commit()
     return _out(user, {"chats": 0, "tokens_30d": 0, "providers": 0})
 
@@ -135,6 +137,16 @@ async def patch_user(user_id: uuid.UUID, body: AdminUserPatch, db: DB, admin: Ad
                 .where(Job.user_id == user.id, Job.status.in_(ACTIVE_JOB_STATUSES))
                 .values(status=JobStatus.cancelled, finished_at=utcnow(), error="akun dinonaktifkan")
             )
+    audit.record(
+        db,
+        user.id,
+        "admin",
+        "admin.user_update",
+        user.email,
+        by=str(admin.id),
+        fields=sorted(k for k, v in body.model_dump(exclude_none=True).items() if k != "password")
+        + (["password"] if body.password else []),
+    )
     await db.commit()
     stats = await _stats(db, [user.id])
     return _out(user, stats[user.id])
@@ -149,6 +161,7 @@ async def delete_user(user_id: uuid.UUID, db: DB, admin: AdminUser) -> None:
         raise ApiError(400, "self_delete", "Tidak bisa menghapus akun sendiri.")
     if user.role == "admin" and await _admin_count(db) <= 1:
         raise ApiError(400, "last_admin", "Minimal harus ada satu admin aktif.")
+    audit.record(db, None, "admin", "admin.user_delete", user.email, by=str(admin.id))
     await db.delete(user)
     await db.commit()
 
