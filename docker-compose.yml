@@ -61,7 +61,9 @@ services:
       # volume's root, which makes initdb fail.
       PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      # Named volume by default. On hosts whose Docker volumes don't allow chmod
+      # (initdb fails), set PG_DATA_PATH to a bind path, e.g. ../files/pgdata on Dokploy.
+      - ${PG_DATA_PATH:-pgdata}:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
