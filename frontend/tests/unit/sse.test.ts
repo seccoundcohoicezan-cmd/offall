@@ -15,7 +15,7 @@ describe("SseParser", () => {
 
   it("ignores keepalive comments and handles CRLF", () => {
     const p = new SseParser();
-    expect(p.push(": keepalive\r\n\r\nevent: snapshot\r\ndata: {\"text\":\"x\"}\r\n\r\n")).toEqual([
+    expect(p.push(': keepalive\r\n\r\nevent: snapshot\r\ndata: {"text":"x"}\r\n\r\n')).toEqual([
       { event: "snapshot", data: '{"text":"x"}' },
     ]);
   });
@@ -28,6 +28,7 @@ describe("format", () => {
     expect(formatTokens(2_000_000)).toBe("2.0jt");
   });
   it("labels every job status", () => {
-    for (const s of ["queued", "running", "waiting_quota", "done", "failed", "cancelled"]) expect(STATUS_LABEL[s]).toBeTruthy();
+    for (const s of ["queued", "running", "waiting_quota", "done", "failed", "cancelled"])
+      expect(STATUS_LABEL[s]).toBeTruthy();
   });
 });

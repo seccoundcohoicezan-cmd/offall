@@ -50,7 +50,9 @@ test("login → add keys → send → close tab → reopen → answer is there",
   const reopened = await context.newPage();
   await reopened.goto(chatUrl);
   const answer = reopened.getByRole("article", { name: "Jawaban AI" }).last();
-  await expect(answer).toContainText("Jawaban untuk: Jelaskan rotasi API key secara singkat", { timeout: 15_000 });
+  await expect(answer).toContainText("Jawaban untuk: Jelaskan rotasi API key secara singkat", {
+    timeout: 15_000,
+  });
   await expect(answer.getByTestId("model-badge")).toHaveText("mock/mock-strong");
 
   // Key A was rotated out (cooldown), B served the answer.
