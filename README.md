@@ -65,8 +65,9 @@ Repo ini satu `docker-compose.yml`, cocok untuk service **Compose** di Dokploy.
    ```
    Dokploy menulis variabel ini ke file `.env` di samping compose, yang dibaca `env_file: .env`.
 3. Tab **Domains**: tambahkan domain → service `frontend`, port `3000`, HTTPS (Let's Encrypt). API tidak perlu domain sendiri.
-4. Jika host Dokploy sudah memakai port 3000, set `WEB_PORT` ke port lain (atau hapus mapping `ports` karena Traefik Dokploy merutekan lewat network internal).
-5. **Deploy**. Auto-deploy: aktifkan webhook/Autodeploy di Dokploy, **atau** isi secret repo GitHub `DOKPLOY_URL`, `DOKPLOY_API_KEY` (Dokploy → Settings → Profile → API/CLI), `DOKPLOY_COMPOSE_ID` agar `.github/workflows/deploy.yml` memanggil `POST /api/compose.deploy` setelah CI hijau.
+4. Jika `initdb` gagal dengan `could not change permissions ... Operation not permitted` (host yang melarang chmod di Docker volume), set `PG_DATA_PATH=../files/pgdata` agar data Postgres memakai bind mount di folder `files` Dokploy.
+5. Jika host Dokploy sudah memakai port 3000, set `WEB_PORT` ke port lain (atau hapus mapping `ports` karena Traefik Dokploy merutekan lewat network internal).
+6. **Deploy**. Auto-deploy: aktifkan webhook/Autodeploy di Dokploy, **atau** isi secret repo GitHub `DOKPLOY_URL`, `DOKPLOY_API_KEY` (Dokploy → Settings → Profile → API/CLI), `DOKPLOY_COMPOSE_ID` agar `.github/workflows/deploy.yml` memanggil `POST /api/compose.deploy` setelah CI hijau.
 
 Alternatif (lihat AGENT_INSTRUCTIONS): frontend di Vercel (`API_INTERNAL_URL` = URL publik API), API + worker di Railway/Render/VPS, Postgres di Neon/Supabase, Redis di Upstash. Satu domain lewat Dokploy lebih sederhana karena cookie tetap first-party.
 
