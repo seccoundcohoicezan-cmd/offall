@@ -107,7 +107,8 @@ async def test_key_test_endpoint_marks_invalid(client):
     r = await client.post(f"/api/v1/providers/{pid}/keys/{bad}/test", headers=headers)
     assert r.json()["ok"] is False and r.json()["status"] == "invalid"
     r = await client.post(f"/api/v1/providers/{pid}/keys/{good}/test", headers=headers)
-    assert r.json() == {"ok": True, "status": "active", "message": "Koneksi berhasil."}
+    assert r.json()["ok"] is True and r.json()["status"] == "active"
+    assert r.json()["message"].startswith("Koneksi berhasil")
 
 
 async def test_short_key_rejected(client):
@@ -138,3 +139,46 @@ async def test_agents_crud(client):
     assert (await client.patch(f"/api/v1/agents/{aid}", json={"name": "x"}, headers=other)).status_code == 404
     assert len((await client.get("/api/v1/agents", headers=headers)).json()) == 1
     assert (await client.delete(f"/api/v1/agents/{aid}", headers=headers)).status_code == 204
+
+
+async def test_key_test_shows_real_provider_error(client, monkeypatch):
+    import litellm
+
+    calls = {}
+
+    class ConnErr(Exception):
+        pass
+
+    async def failing(**kw):
+        calls.update(kw)
+        raise ConnErr("Cannot connect to host api.anthropic.com:443 ssl:default [Name or service not known]")
+
+    monkeypatch.setattr(litellm, "acompletion", failing)
+    headers = await register(client)
+    provider = await setup_provider(client, headers, ["sk-ant-api03-REALLOOKINGKEY1234"], name="anthropic")
+    r = (
+        await client.post(
+            f"/api/v1/providers/{provider['id']}/keys/{provider['key_ids'][0]}/test", headers=headers
+        )
+    ).json()
+    assert r["ok"] is False
+    assert "Tidak bisa terhubung" in r["message"] and "api.anthropic.com" in r["message"]
+    assert "REALLOOKINGKEY" not in r["message"]
+    assert calls["model"] == "anthropic/claude-haiku-4-5"  # cheapest model, non-streaming
+    assert "stream" not in calls and calls["max_tokens"] == 8
+    keys = (await client.get("/api/v1/providers", headers=headers)).json()[0]["keys"]
+    assert "api.anthropic.com" in keys[0]["last_error"]
+
+    class AuthErr(Exception):
+        status_code = 401
+
+    async def unauthorized(**kw):
+        raise AuthErr('{"type":"authentication_error","message":"invalid x-api-key"}')
+
+    monkeypatch.setattr(litellm, "acompletion", unauthorized)
+    r = (
+        await client.post(
+            f"/api/v1/providers/{provider['id']}/keys/{provider['key_ids'][0]}/test", headers=headers
+        )
+    ).json()
+    assert r["status"] == "invalid" and "invalid x-api-key" in r["message"]

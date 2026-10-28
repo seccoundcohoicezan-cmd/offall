@@ -7,6 +7,7 @@ from sqlalchemy import func, select
 from app.core.deps import DB, AppSettings, Cipher, CurrentUser
 from app.core.encryption import mask_key
 from app.core.errors import ApiError, not_found
+from app.core.logging import redact
 from app.db.base import utcnow
 from app.models import AIModel, KeyStatus, Provider, ProviderKey
 from app.schemas import (
@@ -23,7 +24,15 @@ from app.schemas import (
 from app.services import audit
 from app.services.catalog import PROVIDERS
 from app.services.key_pool import is_usable
-from app.services.llm import NO_KEY, InvalidKey, LLMError, QuotaExhausted, RateLimited, StreamRequest, Usage
+from app.services.llm import (
+    NO_KEY,
+    BadRequest,
+    InvalidKey,
+    LLMError,
+    QuotaExhausted,
+    RateLimited,
+    StreamRequest,
+)
 
 router = APIRouter(prefix="/providers", tags=["providers"])
 MAX_KEYS_PER_PROVIDER = 50
@@ -225,13 +234,14 @@ async def test_key(
     from app.services.runtime import build_llm
 
     provider, key = await _owned_key(db, user.id, provider_id, key_id)
+    # The cheapest model is enough to prove the key works.
     model = await db.scalar(
         select(AIModel)
-        .where(AIModel.provider_id == provider.id)
-        .order_by(AIModel.tier.desc(), AIModel.cost_out)
+        .where(AIModel.provider_id == provider.id, AIModel.is_enabled.is_(True))
+        .order_by(AIModel.tier, AIModel.cost_out)
     )
     if model is None:
-        raise ApiError(400, "no_model", "Provider belum punya model.")
+        raise ApiError(400, "no_model", "Provider belum punya model. Sinkron atau tambah model dulu.")
     llm = build_llm(settings)
     req = StreamRequest(
         provider=provider.name,
@@ -239,26 +249,34 @@ async def test_key(
         messages=[{"role": "user", "content": "ping"}],
         api_key=cipher.decrypt(key.api_key_encrypted),
         base_url=provider.base_url,
-        max_tokens=1,
+        max_tokens=8,
     )
+
+    def reason(exc: LLMError) -> str:
+        return redact(str(exc))[:240]
+
+    ok, message = True, f"Koneksi berhasil ({model.model_name})."
     try:
-        async for _ in llm.stream(req, Usage()):
-            break
+        await llm.ping(req)  # type: ignore[attr-defined]
     except InvalidKey as exc:
-        key.status, key.last_error = KeyStatus.invalid, str(exc)[:500]
-        await db.commit()
-        return KeyTestOut(ok=False, status=key.status, message="Key ditolak provider (401/403).")
+        key.status = KeyStatus.invalid
+        ok, message = False, f"Key ditolak provider (401/403). {reason(exc)}"
     except RateLimited:
-        return KeyTestOut(ok=True, status=key.status, message="Key valid tapi sedang kena rate limit.")
-    except QuotaExhausted:
-        return KeyTestOut(ok=False, status=key.status, message="Kredit/kuota key habis.")
+        message = "Key valid tapi sedang kena rate limit."
+    except QuotaExhausted as exc:
+        ok, message = False, f"Kredit/kuota key habis. {reason(exc)}"
+    except BadRequest as exc:
+        ok, message = False, f"Permintaan ditolak provider (cek nama model / akses model). {reason(exc)}"
     except LLMError as exc:
-        return KeyTestOut(ok=False, status=key.status, message=f"Gagal terhubung: {type(exc).__name__}")
-    if key.status == KeyStatus.invalid:
-        key.status = KeyStatus.active
-    key.last_error = None
+        ok, message = False, f"Tidak bisa terhubung ke provider. {reason(exc)}"
+    if ok:
+        if key.status == KeyStatus.invalid:
+            key.status = KeyStatus.active
+        key.last_error = None
+    else:
+        key.last_error = message[:500]
     await db.commit()
-    return KeyTestOut(ok=True, status=key.status, message="Koneksi berhasil.")
+    return KeyTestOut(ok=ok, status=key.status, message=message)
 
 
 STRONG_HINTS = (

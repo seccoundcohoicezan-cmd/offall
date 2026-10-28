@@ -5,12 +5,15 @@ can decide whether to cool down, exhaust, invalidate or just skip a key.
 """
 
 import asyncio
+import logging
 import re
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any, Protocol
 
 from app.services.catalog import PROVIDERS
+
+log = logging.getLogger(__name__)
 
 NO_KEY = "local"  # stored for providers that don't need a key (Ollama, keyless 9Router)
 
@@ -119,26 +122,31 @@ def with_prompt_cache(provider: str, messages: list[dict[str, Any]]) -> list[dic
 
 
 class LiteLLMClient:
-    async def stream(self, req: StreamRequest, usage: Usage) -> AsyncIterator[str]:
-        import litellm
-
+    def _kwargs(self, req: StreamRequest, stream: bool) -> dict[str, Any]:
         spec = PROVIDERS[req.provider]
         kwargs: dict[str, Any] = {
             "model": f"{spec.litellm_prefix}/{req.model_name}",
             "messages": with_prompt_cache(req.provider, req.messages),
             "max_tokens": req.max_tokens,
-            "stream": True,
-            "stream_options": {"include_usage": True},
             "num_retries": 0,
+            "timeout": 120 if stream else 30,
         }
+        if stream:
+            kwargs["stream"] = True
+            kwargs["stream_options"] = {"include_usage": True}
         if req.api_key and (spec.needs_key or req.api_key != NO_KEY):
             kwargs["api_key"] = req.api_key
         elif spec.litellm_prefix == "openai":
             kwargs["api_key"] = "sk-no-key"  # OpenAI client insists on a value; keyless gateways ignore it
         if req.base_url or spec.default_base_url:
             kwargs["api_base"] = req.base_url or spec.default_base_url
+        return kwargs
+
+    async def stream(self, req: StreamRequest, usage: Usage) -> AsyncIterator[str]:
+        import litellm
+
         try:
-            response = await litellm.acompletion(**kwargs)
+            response = await litellm.acompletion(**self._kwargs(req, stream=True))
             async for chunk in response:
                 chunk_usage = getattr(chunk, "usage", None)
                 if chunk_usage:
@@ -151,7 +159,27 @@ class LiteLLMClient:
                     if text:
                         yield text
         except Exception as exc:  # provider SDKs raise many types; normalise them
-            raise classify_error(exc) from exc
+            raise _logged(req, exc) from exc
+
+    async def ping(self, req: StreamRequest) -> None:
+        """Smallest real request (non-streaming) used by the "Tes" button."""
+        import litellm
+
+        try:
+            await litellm.acompletion(**self._kwargs(req, stream=False))
+        except Exception as exc:
+            raise _logged(req, exc) from exc
+
+
+def _logged(req: StreamRequest, exc: Exception) -> LLMError:
+    err = classify_error(exc)
+    # The formatter redacts key-like strings; provider error bodies don't echo keys.
+    log.warning(
+        "provider call failed: %s",
+        str(err)[:400],
+        extra={"provider": req.provider, "model": req.model_name, "event": type(err).__name__},
+    )
+    return err
 
 
 class MockLLMClient:
@@ -183,6 +211,11 @@ class MockLLMClient:
             yield word + " "
 
 
+async def ping_via_stream(client: LLMClient, req: StreamRequest) -> None:
+    async for _ in client.stream(req, Usage()):
+        break
+
+
 class RoutingLLMClient:
     """Sends the mock provider to MockLLMClient and everything else to LiteLLM."""
 
@@ -196,3 +229,15 @@ class RoutingLLMClient:
                 raise InvalidKey("mock provider disabled")
             return self.mock.stream(req, usage)
         return self.real.stream(req, usage)
+
+    async def ping(self, req: StreamRequest) -> None:
+        if req.provider == "mock":
+            if self.mock is None:
+                raise InvalidKey("mock provider disabled")
+            await ping_via_stream(self.mock, req)
+            return
+        real_ping = getattr(self.real, "ping", None)
+        if real_ping is not None:
+            await real_ping(req)
+            return
+        await ping_via_stream(self.real, req)
