@@ -192,3 +192,60 @@ async def test_key_test_shows_real_provider_error(client, monkeypatch):
         )
     ).json()
     assert r["status"] == "invalid" and "invalid x-api-key" in r["message"]
+
+
+async def test_base_url_rejects_api_keys_and_non_urls(client):
+    headers = await register(client)
+    bad = await client.post(
+        "/api/v1/providers",
+        json={"name": "anthropic", "base_url": "sk-ant-usr-12L_uRqOuf9CBvBzjkAkMlGnmuGlHUc1HXo8gjQ8Rz7zF8JP"},
+        headers=headers,
+    )
+    assert bad.status_code == 422
+    assert "API key" in bad.json()["error"]["message"]
+    assert "uRqOuf9" not in bad.text
+    assert (
+        await client.post(
+            "/api/v1/providers", json={"name": "openai", "base_url": "host:1234"}, headers=headers
+        )
+    ).status_code == 422
+    ok = await client.post(
+        "/api/v1/providers",
+        json={"name": "openai", "base_url": "https://proxy.example.com/v1/"},
+        headers=headers,
+    )
+    assert ok.json()["base_url"] == "https://proxy.example.com/v1"
+    pid = ok.json()["id"]
+    assert (
+        await client.patch(
+            f"/api/v1/providers/{pid}", json={"base_url": "sk-proj-abcdefghijklmn"}, headers=headers
+        )
+    ).status_code == 422
+    cleared = await client.patch(f"/api/v1/providers/{pid}", json={"base_url": ""}, headers=headers)
+    assert cleared.json()["base_url"] is None
+
+
+async def test_invalid_stored_base_url_is_ignored_by_adapter(monkeypatch):
+    import types
+
+    import litellm
+
+    from app.services.llm import LiteLLMClient, StreamRequest
+
+    captured = {}
+
+    async def fake(**kw):
+        captured.update(kw)
+        return types.SimpleNamespace()
+
+    monkeypatch.setattr(litellm, "acompletion", fake)
+    req = StreamRequest(
+        "anthropic",
+        "claude-haiku-4-5",
+        [{"role": "user", "content": "x"}],
+        "sk-ant-xxxxxxxxxx",
+        "sk-ant-pasted-here",
+        8,
+    )
+    await LiteLLMClient().ping(req)
+    assert "api_base" not in captured

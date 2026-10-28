@@ -96,7 +96,11 @@ export function KeyPoolCard({ provider }: { provider: Provider }) {
   const usable = provider.usable_keys;
 
   function editBaseUrl() {
-    const value = prompt("Base URL (kosongkan untuk endpoint resmi)", provider.base_url ?? "");
+    const current = provider.base_url && /^https?:\/\//i.test(provider.base_url) ? provider.base_url : "";
+    const value = prompt(
+      "Base URL: alamat http(s)://, BUKAN API key. Kosongkan untuk endpoint resmi.",
+      current,
+    );
     if (value === null) return;
     run(
       () => patch(base, { base_url: value.trim() }),
@@ -122,7 +126,11 @@ export function KeyPoolCard({ provider }: { provider: Provider }) {
                   : "text-muted",
               )}
             >
-              {provider.base_url || "resmi (default)"}
+              {!provider.base_url
+                ? "resmi (default)"
+                : /^https?:\/\//i.test(provider.base_url)
+                  ? provider.base_url
+                  : "(tidak valid, disembunyikan)"}
             </span>
             <button type="button" onClick={editBaseUrl} className="text-accent-2 underline">
               ubah

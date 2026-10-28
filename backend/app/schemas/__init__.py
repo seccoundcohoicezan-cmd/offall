@@ -1,8 +1,9 @@
+import re
 import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 ProviderName = Literal[
     "anthropic",
@@ -110,15 +111,38 @@ class SettingsOut(BaseModel):
     telegram_enabled: bool
 
 
+_URL_RE = re.compile(r"^https?://[^\s/?#]+[^\s]*$", re.IGNORECASE)
+_KEYISH_RE = re.compile(r"(sk-|sk_|gsk_|AIza|xai-|key-)[A-Za-z0-9_\-]{8,}")
+
+
+def check_base_url(value: str | None) -> str | None:
+    """Base URL must be an http(s) address. Pasting an API key here would store and
+    display it in plain text, so it is rejected outright."""
+    if value is None:
+        return None
+    value = value.strip()
+    if not value:
+        return ""
+    if _KEYISH_RE.search(value):
+        raise ValueError("Ini terlihat seperti API key. Isi API key di kolom 'API key', bukan Base URL.")
+    if not _URL_RE.match(value):
+        raise ValueError("Base URL harus berupa alamat http:// atau https:// (contoh: http://host:20128/v1).")
+    return value.rstrip("/")
+
+
 class ProviderIn(BaseModel):
     name: ProviderName
     base_url: str | None = Field(default=None, max_length=500)
     rotation_strategy: Strategy = "fill_first"
 
+    _check_url = field_validator("base_url")(check_base_url)
+
 
 class ProviderPatch(BaseModel):
     rotation_strategy: Strategy | None = None
     base_url: str | None = Field(default=None, max_length=500)
+
+    _check_url = field_validator("base_url")(check_base_url)
 
 
 class KeyIn(BaseModel):

@@ -96,7 +96,10 @@ async def create_provider(
     if exists:
         raise ApiError(409, "provider_exists", "Provider ini sudah ada. Tambahkan key ke provider tersebut.")
     provider = Provider(
-        user_id=user.id, name=body.name, base_url=body.base_url, rotation_strategy=body.rotation_strategy
+        user_id=user.id,
+        name=body.name,
+        base_url=body.base_url or None,
+        rotation_strategy=body.rotation_strategy,
     )
     db.add(provider)
     await db.flush()
@@ -250,9 +253,11 @@ async def reachability(url: str, transport: httpx.AsyncBaseTransport | None = No
     try:
         async with httpx.AsyncClient(timeout=10, transport=transport, follow_redirects=False) as client:
             resp = await client.get(target)
-        return f"Server bisa menjangkau {target} (HTTP {resp.status_code})."
+        return f"Server bisa menjangkau {redact(target)} (HTTP {resp.status_code})."
     except httpx.HTTPError as exc:
-        return f"Server TIDAK bisa menjangkau {target}: {type(exc).__name__} {redact(str(exc))[:160]}."
+        return (
+            f"Server TIDAK bisa menjangkau {redact(target)}: {type(exc).__name__} {redact(str(exc))[:160]}."
+        )
 
 
 @router.post("/{provider_id}/keys/{key_id}/test", response_model=KeyTestOut)

@@ -138,8 +138,9 @@ class LiteLLMClient:
             kwargs["api_key"] = req.api_key
         elif spec.litellm_prefix == "openai":
             kwargs["api_key"] = "sk-no-key"  # OpenAI client insists on a value; keyless gateways ignore it
-        if req.base_url or spec.default_base_url:
-            kwargs["api_base"] = req.base_url or spec.default_base_url
+        base = req.base_url if req.base_url and req.base_url.startswith(("http://", "https://")) else None
+        if base or spec.default_base_url:
+            kwargs["api_base"] = base or spec.default_base_url
         return kwargs
 
     async def stream(self, req: StreamRequest, usage: Usage) -> AsyncIterator[str]:

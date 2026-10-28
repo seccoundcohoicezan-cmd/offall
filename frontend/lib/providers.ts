@@ -27,3 +27,5 @@ export const PROVIDER_OPTIONS = [
 /** Gateways whose model list comes from the endpoint itself (sync / add by hand). */
 export const CUSTOM_MODEL_PROVIDERS = new Set(["9router", "openai_compatible"]);
 export const KEYLESS_PROVIDERS = new Set(["ollama", "9router", "openai_compatible"]);
+/** Providers where the user must point OFALL at an address (gateway / self-hosted). */
+export const URL_PROVIDERS = new Set(["9router", "openai_compatible", "ollama"]);

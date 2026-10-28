@@ -5,7 +5,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Boxes, ShieldCheck } from "lucide-react";
 import { post } from "@/lib/api";
 import { useProviders } from "@/lib/hooks";
-import { PROVIDER_OPTIONS } from "@/lib/providers";
+import { PROVIDER_OPTIONS, URL_PROVIDERS } from "@/lib/providers";
 import { KeyPoolCard } from "@/components/KeyPoolCard";
 import {
   Button,
@@ -30,7 +30,7 @@ export default function ProvidersPage() {
   async function create(e: React.FormEvent) {
     e.preventDefault();
     try {
-      await post("/providers", { name, base_url: baseUrl || null });
+      await post("/providers", { name, base_url: URL_PROVIDERS.has(name) ? baseUrl || null : null });
       setBaseUrl("");
       qc.invalidateQueries({ queryKey: ["providers"] });
       toast.success("Provider ditambahkan. Sekarang tambah API key-nya.");
@@ -66,17 +66,30 @@ export default function ProvidersPage() {
               ))}
             </Select>
           </div>
-          <div>
-            <Label htmlFor="provider-url" hint="(opsional; 9Router: http://host.docker.internal:20128/v1)">
-              Base URL
-            </Label>
-            <Input
-              id="provider-url"
-              value={baseUrl}
-              onChange={(e) => setBaseUrl(e.target.value)}
-              placeholder="http://host:11434"
-            />
-          </div>
+          {URL_PROVIDERS.has(name) ? (
+            <div>
+              <Label htmlFor="provider-url" hint="(alamat endpoint, bukan API key)">
+                Base URL
+              </Label>
+              <Input
+                id="provider-url"
+                type="url"
+                inputMode="url"
+                autoComplete="off"
+                value={baseUrl}
+                onChange={(e) => setBaseUrl(e.target.value)}
+                placeholder={
+                  name === "ollama"
+                    ? "http://host.docker.internal:11434"
+                    : "http://host.docker.internal:20128/v1"
+                }
+              />
+            </div>
+          ) : (
+            <p className="self-center text-xs text-muted">
+              Memakai endpoint resmi provider. API key diisi di kartu provider setelah ditambahkan.
+            </p>
+          )}
           <Button type="submit" disabled={existing.has(name)}>
             <Boxes size={16} /> Tambah provider
           </Button>
