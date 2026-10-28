@@ -57,6 +57,9 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-offall}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-offall}
       POSTGRES_DB: ${POSTGRES_DB:-aigateway}
+      # Subdirectory: some hosts (seen on the Dokploy server) refuse chmod on a
+      # volume's root, which makes initdb fail.
+      PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -64,6 +67,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
+      start_period: 30s
 
   redis:
     image: redis:7-alpine
