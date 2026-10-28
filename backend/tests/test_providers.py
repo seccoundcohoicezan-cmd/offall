@@ -1,5 +1,6 @@
 import logging
 
+import httpx
 from sqlalchemy import select
 
 from app.models import ProviderKey
@@ -151,9 +152,16 @@ async def test_key_test_shows_real_provider_error(client, monkeypatch):
 
     async def failing(**kw):
         calls.update(kw)
-        raise ConnErr("Cannot connect to host api.anthropic.com:443 ssl:default [Name or service not known]")
+        try:
+            raise OSError("[Errno -2] Name or service not known: api.anthropic.com")
+        except OSError as root:
+            raise ConnErr("AnthropicException - /REDACTED/v1/messages") from root
+
+    def probe(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("[Errno -2] Name or service not known")
 
     monkeypatch.setattr(litellm, "acompletion", failing)
+    client._transport.app.state.http_transport = httpx.MockTransport(probe)
     headers = await register(client)
     provider = await setup_provider(client, headers, ["sk-ant-api03-REALLOOKINGKEY1234"], name="anthropic")
     r = (
@@ -163,6 +171,8 @@ async def test_key_test_shows_real_provider_error(client, monkeypatch):
     ).json()
     assert r["ok"] is False
     assert "Tidak bisa terhubung" in r["message"] and "api.anthropic.com" in r["message"]
+    assert "Server TIDAK bisa menjangkau https://api.anthropic.com" in r["message"]
+    assert "penyebab: OSError" in r["message"]  # root cause survives LiteLLM's scrubbing
     assert "REALLOOKINGKEY" not in r["message"]
     assert calls["model"] == "anthropic/claude-haiku-4-5"  # cheapest model, non-streaming
     assert "stream" not in calls and calls["max_tokens"] == 8

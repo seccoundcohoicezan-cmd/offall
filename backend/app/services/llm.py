@@ -171,12 +171,29 @@ class LiteLLMClient:
             raise _logged(req, exc) from exc
 
 
+def root_cause(exc: BaseException) -> str:
+    """Innermost exception in the chain. LiteLLM scrubs paths/private hosts out of its
+    own messages, which can hide the real reason (e.g. which host failed)."""
+    seen: set[int] = set()
+    cur: BaseException = exc
+    while id(cur) not in seen:
+        seen.add(id(cur))
+        nxt = cur.__cause__ or cur.__context__
+        if nxt is None:
+            break
+        cur = nxt
+    return "" if cur is exc else f"{type(cur).__name__}: {str(cur)[:300]}"
+
+
 def _logged(req: StreamRequest, exc: Exception) -> LLMError:
     err = classify_error(exc)
+    cause = root_cause(exc)
+    if cause and cause not in str(err):
+        err.args = (f"{err} | penyebab: {cause}",)
     # The formatter redacts key-like strings; provider error bodies don't echo keys.
     log.warning(
         "provider call failed: %s",
-        str(err)[:400],
+        str(err)[:700],
         extra={"provider": req.provider, "model": req.model_name, "event": type(err).__name__},
     )
     return err

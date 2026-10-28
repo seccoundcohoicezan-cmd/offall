@@ -222,6 +222,39 @@ async def delete_key(provider_id: uuid.UUID, key_id: uuid.UUID, db: DB, user: Cu
     await db.commit()
 
 
+OFFICIAL_ENDPOINTS = {
+    "anthropic": "https://api.anthropic.com",
+    "openai": "https://api.openai.com",
+    "gemini": "https://generativelanguage.googleapis.com",
+    "groq": "https://api.groq.com",
+    "openrouter": "https://openrouter.ai",
+    "mistral": "https://api.mistral.ai",
+}
+
+
+def endpoint_for(provider: Provider) -> str:
+    spec = PROVIDERS.get(provider.name)
+    return (
+        provider.base_url
+        or (spec.default_base_url if spec else None)
+        or OFFICIAL_ENDPOINTS.get(provider.name, "")
+    )
+
+
+async def reachability(url: str, transport: httpx.AsyncBaseTransport | None = None) -> str:
+    """Plain HTTPS probe from the server, independent of LiteLLM, to tell network
+    problems (DNS, firewall, wrong Base URL) apart from provider errors."""
+    if not url:
+        return ""
+    target = url.split("?")[0]
+    try:
+        async with httpx.AsyncClient(timeout=10, transport=transport, follow_redirects=False) as client:
+            resp = await client.get(target)
+        return f"Server bisa menjangkau {target} (HTTP {resp.status_code})."
+    except httpx.HTTPError as exc:
+        return f"Server TIDAK bisa menjangkau {target}: {type(exc).__name__} {redact(str(exc))[:160]}."
+
+
 @router.post("/{provider_id}/keys/{key_id}/test", response_model=KeyTestOut)
 async def test_key(
     provider_id: uuid.UUID,
@@ -230,6 +263,7 @@ async def test_key(
     user: CurrentUser,
     cipher: Cipher,
     settings: AppSettings,
+    request: Request,
 ) -> KeyTestOut:
     from app.services.runtime import build_llm
 
@@ -253,7 +287,7 @@ async def test_key(
     )
 
     def reason(exc: LLMError) -> str:
-        return redact(str(exc))[:240]
+        return redact(str(exc))[:400]
 
     ok, message = True, f"Koneksi berhasil ({model.model_name})."
     try:
@@ -268,7 +302,8 @@ async def test_key(
     except BadRequest as exc:
         ok, message = False, f"Permintaan ditolak provider (cek nama model / akses model). {reason(exc)}"
     except LLMError as exc:
-        ok, message = False, f"Tidak bisa terhubung ke provider. {reason(exc)}"
+        probe = await reachability(endpoint_for(provider), getattr(request.app.state, "http_transport", None))
+        ok, message = False, f"Tidak bisa terhubung ke provider. {probe} Detail: {reason(exc)}"
     if ok:
         if key.status == KeyStatus.invalid:
             key.status = KeyStatus.active
