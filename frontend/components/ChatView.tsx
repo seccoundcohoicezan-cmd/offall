@@ -6,7 +6,6 @@ import { useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   BarChart3,
-  Bot,
   Code2,
   MessageCircle,
   FileText,
@@ -77,51 +76,29 @@ interface LiveJob {
   detail?: string;
 }
 
-function WelcomeHero() {
+function EmptyChat() {
   return (
-    <section className="hero-gradient relative hidden shrink-0 items-center gap-6 overflow-hidden rounded-3xl border border-accent/40 px-6 py-5 text-white neon-border lg:flex">
+    <div className="mx-auto flex max-w-xl flex-col items-center gap-3 px-2 py-6 text-center">
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
         src="/logo-mark-wide.png"
         alt=""
-        className="h-12 w-auto drop-shadow-[0_0_18px_rgba(192,132,252,0.8)]"
+        className="h-12 w-auto drop-shadow-[0_0_18px_rgba(139,92,246,0.6)]"
       />
-      <div className="min-w-0">
-        <p className="text-sm text-violet-200">Selamat datang di</p>
-        <p className="text-3xl font-extrabold tracking-tight">OFALL</p>
-        <p className="text-sm text-white/80">Satu platform, semua AI. Lebih produktif, lebih cerdas.</p>
-      </div>
-      <div className="ml-auto hidden gap-3 xl:flex">
-        {FEATURES.map(({ icon: Icon, title, text }) => (
-          <div
-            key={title}
-            className="flex items-center gap-3 rounded-2xl border border-white/15 bg-white/5 px-4 py-3 backdrop-blur"
-          >
-            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/10">
-              <Icon size={20} />
-            </span>
-            <span>
-              <span className="block text-sm font-semibold">{title}</span>
-              <span className="block text-xs text-white/70">{text}</span>
-            </span>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function EmptyChat() {
-  return (
-    <div className="mx-auto flex max-w-md flex-col items-center gap-3 rounded-3xl border border-border bg-surface/50 px-6 py-8 text-center">
-      <span className="relative flex h-20 w-20 items-center justify-center rounded-full bg-gradient-to-br from-accent/40 to-accent-2/20 text-accent-2 shadow-[0_0_40px_rgba(139,92,246,0.45)]">
-        <Bot size={40} />
-      </span>
-      <p className="text-xl font-bold">Mulai percakapan</p>
+      <p className="text-xl font-bold">Selamat datang di OFALL</p>
       <p className="text-sm text-muted">
-        Pilih model atau biarkan Auto memilihkan. Jawaban tetap diproses di server walau tab ditutup.
+        Satu chat, semua AI. Pilih model atau biarkan <b>Auto</b> memilihkan; jawaban tetap diproses di server
+        walau tab ditutup.
       </p>
       <div className="mt-1 flex flex-wrap justify-center gap-2">
+        {FEATURES.map(({ icon: Icon, title }) => (
+          <span
+            key={title}
+            className="flex items-center gap-1.5 rounded-xl border border-border bg-surface-2/60 px-3 py-1.5 text-xs"
+          >
+            <Icon size={13} className="text-accent-2" /> {title}
+          </span>
+        ))}
         {CHIPS.map(({ icon: Icon, label }) => (
           <span
             key={label}
@@ -146,7 +123,7 @@ export function ChatView({ chatId }: { chatId?: string }) {
   const [sending, setSending] = useState(false);
   const [live, setLive] = useState<LiveJob | null>(null);
   const [draftAgent, setDraftAgent] = useState<string | null>(null);
-  const [tab, setTab] = useState<"model" | "tools" | "file">("model");
+  const [toolsOpen, setToolsOpen] = useState(false);
   const [file, setFile] = useState<{ name: string; text: string } | null>(null);
   const [listOpen, setListOpen] = useState(false);
   const [panelOpen, setPanelOpen] = useState(false);
@@ -365,7 +342,6 @@ export function ChatView({ chatId }: { chatId?: string }) {
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-4">
-      {!chatId && <WelcomeHero />}
       <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 md:grid-cols-[16rem_1fr] 2xl:grid-cols-[19rem_1fr_22rem]">
         <aside className="hidden min-h-0 rounded-3xl border border-border bg-surface/40 p-3 md:block">
           <ChatList />
@@ -497,38 +473,16 @@ export function ChatView({ chatId }: { chatId?: string }) {
               send();
             }}
           >
-            <div className="mb-2 flex gap-1" role="tablist" aria-label="Mode input">
-              {(
-                [
-                  ["model", "Model", Sparkles],
-                  ["tools", "Tools", Wrench],
-                  ["file", "File", Paperclip],
-                ] as const
-              ).map(([key, label, Icon]) => (
-                <button
-                  key={key}
-                  type="button"
-                  role="tab"
-                  aria-selected={tab === key}
-                  onClick={() => (key === "file" && !file ? fileRef.current?.click() : setTab(key))}
-                  className={cn(
-                    "flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-sm transition",
-                    tab === key
-                      ? "bg-accent/20 text-text ring-1 ring-accent/60"
-                      : "text-muted hover:text-text",
-                  )}
-                >
-                  <Icon size={14} /> {label}
-                </button>
-              ))}
-            </div>
-            {tab === "tools" && (
+            {toolsOpen && (
               <div className="mb-2 flex flex-wrap gap-1.5">
                 {TOOLS.map(({ label, icon: Icon, prefix }) => (
                   <button
                     key={label}
                     type="button"
-                    onClick={() => setInput((v) => (v.startsWith(prefix) ? v : prefix + v))}
+                    onClick={() => {
+                      setInput((v) => (v.startsWith(prefix) ? v : prefix + v));
+                      setToolsOpen(false);
+                    }}
                     className="flex items-center gap-1.5 rounded-lg border border-border px-2.5 py-1 text-xs text-muted hover:border-accent hover:text-text"
                   >
                     <Icon size={13} /> {label}
@@ -576,10 +530,10 @@ export function ChatView({ chatId }: { chatId?: string }) {
                     send();
                   }
                 }}
-                rows={1}
+                rows={3}
                 maxLength={20000}
                 placeholder="Tulis pesan Anda di sini..."
-                className="max-h-40 min-h-[44px] flex-1 resize-none field-sizing-content bg-transparent px-1.5 py-1 text-[15px] placeholder:text-muted focus:outline-none"
+                className="max-h-[40dvh] min-h-[72px] flex-1 resize-none sm:min-h-[88px] field-sizing-content bg-transparent px-1.5 py-1 text-[15px] placeholder:text-muted focus:outline-none"
               />
               {live ? (
                 <button
@@ -602,19 +556,6 @@ export function ChatView({ chatId }: { chatId?: string }) {
               )}
             </div>
             <div className="mt-2 flex items-center gap-2 sm:flex-wrap">
-              <button
-                type="button"
-                onClick={() => setModel("auto")}
-                aria-pressed={model === "auto"}
-                className={cn(
-                  "hidden h-10 items-center gap-1.5 rounded-xl border px-3 text-sm sm:flex",
-                  model === "auto"
-                    ? "border-accent bg-accent/15 text-text"
-                    : "border-border text-muted hover:text-text",
-                )}
-              >
-                <Sparkles size={14} /> Auto (hemat)
-              </button>
               <ModelSelect value={model} onChange={setModel} />
               <label htmlFor="agent-select" className="sr-only">
                 Pilih agent
@@ -623,7 +564,7 @@ export function ChatView({ chatId }: { chatId?: string }) {
                 id="agent-select"
                 value={agentId ?? ""}
                 onChange={(e) => setAgent(e.target.value || null)}
-                className="h-10 min-w-0 max-w-[10rem] flex-1 rounded-xl border border-border bg-surface-2 pl-2 pr-6 text-sm sm:flex-none 2xl:hidden"
+                className="h-10 min-w-0 max-w-[8.5rem] flex-1 rounded-xl border border-border bg-surface-2 pl-2 pr-6 text-sm sm:max-w-[10rem] sm:flex-none 2xl:hidden"
               >
                 <option value="">Tanpa agent</option>
                 {agents.data
@@ -634,7 +575,20 @@ export function ChatView({ chatId }: { chatId?: string }) {
                     </option>
                   ))}
               </select>
-              <div className="ml-auto hidden items-center gap-1 sm:flex">
+              <div className="ml-auto flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setToolsOpen(!toolsOpen)}
+                  aria-pressed={toolsOpen}
+                  className={cn(
+                    "rounded-xl p-2 hover:bg-surface-2 hover:text-text",
+                    toolsOpen ? "bg-accent/20 text-text" : "text-muted",
+                  )}
+                  aria-label="Tools (template perintah)"
+                  title="Tools"
+                >
+                  <Wrench size={18} />
+                </button>
                 <button
                   type="button"
                   onClick={() => fileRef.current?.click()}
@@ -646,14 +600,14 @@ export function ChatView({ chatId }: { chatId?: string }) {
                 <button
                   type="button"
                   onClick={() => setInput((v) => `${v}${v ? "\n" : ""}\`\`\`\n\n\`\`\``)}
-                  className="rounded-xl p-2 text-muted hover:bg-surface-2 hover:text-text"
+                  className="hidden rounded-xl p-2 text-muted hover:bg-surface-2 hover:text-text sm:block"
                   aria-label="Sisipkan blok kode"
                 >
                   <Code2 size={18} />
                 </button>
                 <Link
                   href="/settings"
-                  className="rounded-xl p-2 text-muted hover:bg-surface-2 hover:text-text"
+                  className="hidden rounded-xl p-2 text-muted hover:bg-surface-2 hover:text-text sm:block"
                   aria-label="Pengaturan chat"
                 >
                   <Settings2 size={18} />

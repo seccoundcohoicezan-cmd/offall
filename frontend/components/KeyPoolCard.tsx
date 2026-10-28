@@ -7,6 +7,7 @@ import { del, patch, post } from "@/lib/api";
 import type { KeyStatus, Provider, ProviderKey, Strategy } from "@/lib/types";
 import { formatTokens, STATUS_LABEL, timeAgo } from "@/lib/format";
 import { ProviderIcon } from "./ProviderIcon";
+import { cn } from "@/lib/cn";
 import { GatewayModels } from "./GatewayModels";
 import { CUSTOM_MODEL_PROVIDERS, KEYLESS_PROVIDERS } from "@/lib/providers";
 import { Badge, Button, Card, Input, Label, Select, Switch } from "./ui";
@@ -93,6 +94,15 @@ export function KeyPoolCard({ provider }: { provider: Provider }) {
   }
 
   const usable = provider.usable_keys;
+
+  function editBaseUrl() {
+    const value = prompt("Base URL (kosongkan untuk endpoint resmi)", provider.base_url ?? "");
+    if (value === null) return;
+    run(
+      () => patch(base, { base_url: value.trim() }),
+      value.trim() ? "Base URL diperbarui" : "Kembali ke endpoint resmi",
+    );
+  }
   return (
     <Card className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center gap-3">
@@ -102,6 +112,27 @@ export function KeyPoolCard({ provider }: { provider: Provider }) {
           <p className="text-xs text-muted">
             {usable}/{provider.keys.length} key bisa dipakai
           </p>
+          <p className="mt-0.5 flex flex-wrap items-center gap-1 text-xs">
+            <span className="text-muted">Endpoint:</span>
+            <span
+              className={cn(
+                "font-mono",
+                provider.base_url && !CUSTOM_MODEL_PROVIDERS.has(provider.name) && provider.name !== "ollama"
+                  ? "text-warning"
+                  : "text-muted",
+              )}
+            >
+              {provider.base_url || "resmi (default)"}
+            </span>
+            <button type="button" onClick={editBaseUrl} className="text-accent-2 underline">
+              ubah
+            </button>
+          </p>
+          {provider.base_url && !CUSTOM_MODEL_PROVIDERS.has(provider.name) && provider.name !== "ollama" && (
+            <p className="mt-1 text-xs text-warning">
+              Provider resmi memakai Base URL kustom. Kosongkan jika ingin langsung ke API resmi.
+            </p>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <label htmlFor={`strategy-${provider.id}`} className="text-xs text-muted">
