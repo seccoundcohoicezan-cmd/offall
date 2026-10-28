@@ -1,3 +1,4 @@
+import re
 import uuid
 
 import httpx
@@ -225,6 +226,13 @@ async def delete_key(provider_id: uuid.UUID, key_id: uuid.UUID, db: DB, user: Cu
     await db.commit()
 
 
+def provider_message(exc: Exception) -> str:
+    """Pull the human sentence out of a provider's JSON error body when there is one."""
+    text = str(exc)
+    match = re.search(r'"message"\s*:\s*"([^"]{3,300})"', text)
+    return redact(match.group(1) if match else text)[:300]
+
+
 OFFICIAL_ENDPOINTS = {
     "anthropic": "https://api.anthropic.com",
     "openai": "https://api.openai.com",
@@ -303,7 +311,15 @@ async def test_key(
     except RateLimited:
         message = "Key valid tapi sedang kena rate limit."
     except QuotaExhausted as exc:
-        ok, message = False, f"Kredit/kuota key habis. {reason(exc)}"
+        ok, message = (
+            False,
+            (
+                "Saldo kredit/kuota API akun ini kosong. Permintaan ditolak provider sebelum diproses, "
+                "jadi tidak ada token yang terpakai. Isi kredit di dashboard billing provider "
+                "(Anthropic: console.anthropic.com → Plans & Billing). "
+                f"Pesan provider: {provider_message(exc)}"
+            ),
+        )
     except BadRequest as exc:
         ok, message = False, f"Permintaan ditolak provider (cek nama model / akses model). {reason(exc)}"
     except LLMError as exc:

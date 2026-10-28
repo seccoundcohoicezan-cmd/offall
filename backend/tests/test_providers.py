@@ -249,3 +249,27 @@ async def test_invalid_stored_base_url_is_ignored_by_adapter(monkeypatch):
     )
     await LiteLLMClient().ping(req)
     assert "api_base" not in captured
+
+
+async def test_key_test_explains_empty_credit(client, monkeypatch):
+    import litellm
+
+    class Low(Exception):
+        status_code = 400
+
+    async def low(**kw):
+        raise Low(
+            'AnthropicException - {"type":"error","error":{"type":"invalid_request_error","message":'
+            '"Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing."}}'
+        )
+
+    monkeypatch.setattr(litellm, "acompletion", low)
+    headers = await register(client)
+    provider = await setup_provider(client, headers, ["sk-ant-api03-REALLOOKINGKEY1234"], name="anthropic")
+    url = f"/api/v1/providers/{provider['id']}/keys/{provider['key_ids'][0]}/test"
+    r = (await client.post(url, headers=headers)).json()
+    assert r["ok"] is False and r["status"] == "active"  # key itself is fine
+    assert "tidak ada token yang terpakai" in r["message"]
+    assert r["message"].endswith(
+        "Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing."
+    )
