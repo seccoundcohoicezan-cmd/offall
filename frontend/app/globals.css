@@ -1,0 +1,109 @@
+@import "tailwindcss";
+@import "highlight.js/styles/github-dark.css";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --bg: #f4f5fb;
+  --surface: #ffffff;
+  --surface-2: #eef0f8;
+  --border: #dde1ee;
+  --text: #121528;
+  --muted: #5b6180;
+  --accent: #6d4aff;
+  --accent-2: #a855f7;
+  --success: #15a36b;
+  --warning: #c27c0e;
+  --danger: #d9364f;
+}
+
+.dark {
+  --bg: #070a1a;
+  --surface: #0d1230;
+  --surface-2: #141a3f;
+  --border: #232b5c;
+  --text: #eef0ff;
+  --muted: #9aa3cf;
+  --accent: #7c5cff;
+  --accent-2: #b26bff;
+  --success: #34d399;
+  --warning: #fbbf24;
+  --danger: #fb7185;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-border: var(--border);
+  --color-text: var(--text);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-2: var(--accent-2);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --font-sans: var(--font-jakarta), ui-sans-serif, system-ui, sans-serif;
+}
+
+html,
+body {
+  background: var(--bg);
+  color: var(--text);
+}
+
+.dark body {
+  background:
+    radial-gradient(1200px 500px at 50% -200px, rgba(124, 92, 255, 0.18), transparent 70%), var(--bg);
+}
+
+.neon-border {
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent) 70%, transparent),
+    0 0 24px -6px color-mix(in srgb, var(--accent) 60%, transparent);
+}
+
+.hero-gradient {
+  background: linear-gradient(120deg, #2a1a7a 0%, #3b1fa8 45%, #1a2b8f 100%);
+}
+
+.prose-chat :where(p, ul, ol, pre, table, blockquote) {
+  margin: 0.5rem 0;
+}
+.prose-chat ul {
+  list-style: disc;
+  padding-left: 1.25rem;
+}
+.prose-chat ol {
+  list-style: decimal;
+  padding-left: 1.25rem;
+}
+.prose-chat pre {
+  overflow-x: auto;
+  border-radius: 0.6rem;
+  border: 1px solid var(--border);
+}
+.prose-chat code:not(pre code) {
+  background: var(--surface-2);
+  padding: 0.1rem 0.35rem;
+  border-radius: 0.3rem;
+  font-size: 0.875em;
+}
+.prose-chat table {
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+.prose-chat th,
+.prose-chat td {
+  border: 1px solid var(--border);
+  padding: 0.3rem 0.6rem;
+}
+.prose-chat a {
+  color: var(--accent-2);
+  text-decoration: underline;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent-2);
+  outline-offset: 2px;
+}

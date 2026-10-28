@@ -1,0 +1,14 @@
+{
+  "name": "OFALL AI Gateway",
+  "short_name": "OFALL",
+  "description": "1 Chat • Banyak AI",
+  "start_url": "/chat",
+  "display": "standalone",
+  "background_color": "#070a1a",
+  "theme_color": "#070a1a",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
