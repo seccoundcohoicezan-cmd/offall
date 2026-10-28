@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     job_timeout_seconds: int = 600
     key_max_concurrency: int = 4
     default_cooldown_seconds: int = 60
-    rate_limit_per_minute: int = 120
+    rate_limit_per_minute: int = 600  # the SPA polls several endpoints per user
     login_rate_limit_per_minute: int = 10
     stream_ttl_seconds: int = 3600
     cache_similarity_threshold: float = Field(default=0.95, ge=0.5, le=1.0)

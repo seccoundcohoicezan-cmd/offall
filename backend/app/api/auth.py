@@ -11,6 +11,7 @@ from app.core.security import TokenError, create_token, decode_token, hash_passw
 from app.db.base import as_utc, utcnow
 from app.models import RefreshToken, User
 from app.schemas import Credentials, RefreshIn, TokenOut, UserOut
+from app.services import app_settings
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -46,8 +47,8 @@ async def _issue(db: DB, settings: AppSettings, user: User, response: Response) 
 async def register(
     body: Credentials, request: Request, response: Response, db: DB, settings: AppSettings
 ) -> TokenOut:
-    if not settings.registration_open:
-        raise ApiError(403, "registration_closed", "Pendaftaran sedang ditutup.")
+    if not (await app_settings.get_all(db, settings))["registration_open"]:
+        raise ApiError(403, "registration_closed", "Pendaftaran ditutup. Minta akun ke admin.")
     await ratelimit.hit(
         request.app.state.redis, f"register:{client_ip(request)}", settings.login_rate_limit_per_minute
     )
@@ -73,6 +74,9 @@ async def login(
     user = await db.scalar(select(User).where(User.email == body.email.lower()))
     if user is None or not verify_password(user.password_hash, body.password):
         raise ApiError(401, "invalid_credentials", "Email atau password salah.")
+    if not user.is_active:
+        raise ApiError(403, "account_disabled", "Akun dinonaktifkan oleh admin.")
+    user.last_login_at = utcnow()
     return await _issue(db, settings, user, response)
 
 
@@ -99,8 +103,8 @@ async def refresh(
     if stored is None or (as_utc(stored.expires_at) or utcnow()) < utcnow():
         raise ApiError(401, "unauthorized", "Refresh token kedaluwarsa.")
     user = await db.get(User, uuid.UUID(payload["sub"]))
-    if user is None:
-        raise ApiError(401, "unauthorized", "User tidak ditemukan.")
+    if user is None or not user.is_active:
+        raise ApiError(401, "unauthorized", "Akun tidak aktif.")
     return await _issue(db, settings, user, response)
 
 
@@ -118,6 +122,12 @@ async def logout(request: Request, response: Response, db: DB, settings: AppSett
             pass
     response.delete_cookie(ACCESS_COOKIE, path="/")
     response.delete_cookie(REFRESH_COOKIE, path="/api/v1/auth")
+
+
+@router.get("/config")
+async def auth_config(db: DB, settings: AppSettings) -> dict[str, bool]:
+    """Public: lets the login/register pages know whether self sign-up is open."""
+    return {"registration_open": bool((await app_settings.get_all(db, settings))["registration_open"])}
 
 
 @router.get("/me", response_model=UserOut)

@@ -14,6 +14,7 @@ Interactive docs: `/docs` on the API service (internal; not proxied by the front
 | POST | `/api/v1/auth/login` | - | Login |
 | POST | `/api/v1/auth/refresh` | - | Refresh |
 | POST | `/api/v1/auth/logout` | - | Logout |
+| GET | `/api/v1/auth/config` | yes | Public: lets the login/register pages know whether self sign-up is open. |
 | GET | `/api/v1/auth/me` | yes | Me |
 | GET | `/api/v1/providers` | yes | List Providers |
 | POST | `/api/v1/providers` | yes | Create Provider |
@@ -45,6 +46,12 @@ Interactive docs: `/docs` on the API service (internal; not proxied by the front
 | GET | `/api/v1/settings` | yes | Get User Settings |
 | PATCH | `/api/v1/settings` | yes | Patch User Settings |
 | POST | `/api/v1/push/subscribe` | yes | Push Subscribe |
+| GET | `/api/v1/admin/users` | yes | List Users |
+| POST | `/api/v1/admin/users` | yes | Create User |
+| PATCH | `/api/v1/admin/users/{user_id}` | yes | Patch User |
+| DELETE | `/api/v1/admin/users/{user_id}` | yes | Delete User |
+| GET | `/api/v1/admin/settings` | yes | Get Instance Settings |
+| PATCH | `/api/v1/admin/settings` | yes | Patch Instance Settings |
 | GET | `/health` | - | Health |
 | GET | `/api/v1/health` | - | Health |
 

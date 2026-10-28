@@ -18,6 +18,7 @@ from sqlalchemy import (
     Uuid,
 )
 from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.sql.expression import true as sa_true
 
 from app.db.base import Base, CreatedMixin, IdMixin
 
@@ -68,6 +69,17 @@ class User(IdMixin, CreatedMixin, Base):
     password_hash: Mapped[str] = mapped_column(String(255))
     role: Mapped[str] = mapped_column(String(20), default="user")
     settings: Mapped[dict[str, Any]] = mapped_column(JSON, default=default_settings)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=sa_true())
+    display_name: Mapped[str] = mapped_column(String(80), default="", server_default="")
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class AppSetting(Base):
+    """Instance-wide switches the admin controls from the UI (override env defaults)."""
+
+    __tablename__ = "app_settings"
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[Any] = mapped_column(JSON)
 
 
 class RefreshToken(CreatedMixin, Base):

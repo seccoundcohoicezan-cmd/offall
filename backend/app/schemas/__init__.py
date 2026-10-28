@@ -32,7 +32,41 @@ class UserOut(ORM):
     id: uuid.UUID
     email: str
     role: str
+    display_name: str = ""
+    is_active: bool = True
     created_at: datetime
+
+
+Role = Literal["admin", "user"]
+
+
+class AdminUserOut(UserOut):
+    last_login_at: datetime | None
+    chats: int = 0
+    tokens_30d: int = 0
+    providers: int = 0
+
+
+class AdminUserIn(BaseModel):
+    email: EmailStr
+    password: str = Field(min_length=8, max_length=128)
+    role: Role = "user"
+    display_name: str = Field(default="", max_length=80)
+
+
+class AdminUserPatch(BaseModel):
+    role: Role | None = None
+    is_active: bool | None = None
+    password: str | None = Field(default=None, min_length=8, max_length=128)
+    display_name: str | None = Field(default=None, max_length=80)
+
+
+class InstanceSettings(BaseModel):
+    registration_open: bool
+
+
+class InstanceSettingsPatch(BaseModel):
+    registration_open: bool | None = None
 
 
 class SettingsIn(BaseModel):

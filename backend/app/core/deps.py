@@ -63,6 +63,8 @@ async def current_user(
     user = await db.get(User, uuid.UUID(payload["sub"]))
     if user is None:
         raise ApiError(401, "unauthorized", "User tidak ditemukan.")
+    if not user.is_active:
+        raise ApiError(403, "account_disabled", "Akun dinonaktifkan oleh admin.")
     await ratelimit.hit(get_redis(request), f"user:{user.id}", settings.rate_limit_per_minute)
     await ratelimit.hit(get_redis(request), f"ip:{client_ip(request)}", settings.rate_limit_per_minute * 2)
     return user
@@ -74,3 +76,12 @@ AppSettings = Annotated[Settings, Depends(get_settings)]
 Redis = Annotated[Any, Depends(get_redis)]
 Queue = Annotated[Any, Depends(get_queue)]
 Cipher = Annotated[KeyCipher, Depends(get_cipher)]
+
+
+async def admin_user(user: CurrentUser) -> User:
+    if user.role != "admin":
+        raise ApiError(403, "forbidden", "Hanya admin yang boleh mengakses ini.")
+    return user
+
+
+AdminUser = Annotated[User, Depends(admin_user)]
