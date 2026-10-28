@@ -9,6 +9,7 @@ import {
   Bell,
   Bot,
   Boxes,
+  Brain,
   ChevronDown,
   Database,
   ListChecks,
@@ -35,6 +36,7 @@ import { Skeleton } from "./ui";
 const NAV = [
   { href: "/chat", label: "Chat", icon: MessageSquare },
   { href: "/agents", label: "Agents", icon: Bot },
+  { href: "/memory", label: "Memory", icon: Brain },
   { href: "/providers", label: "Multi-Provider", icon: Boxes },
   { href: "/models", label: "Models", icon: Database },
   { href: "/jobs", label: "Jobs", icon: ListChecks },
@@ -42,7 +44,7 @@ const NAV = [
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 const ADMIN_NAV = { href: "/admin", label: "Users", icon: Users };
-const MOBILE_TABS = [NAV[0], NAV[1], NAV[2], NAV[5]];
+const MOBILE_TABS = [NAV[0], NAV[1], NAV[2], NAV[3]];
 
 function isActive(pathname: string, href: string) {
   return pathname === href || pathname.startsWith(`${href}/`);

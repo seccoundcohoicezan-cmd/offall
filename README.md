@@ -71,6 +71,19 @@ Repo ini satu `docker-compose.yml`, cocok untuk service **Compose** di Dokploy.
 
 Alternatif (lihat AGENT_INSTRUCTIONS): frontend di Vercel (`API_INTERNAL_URL` = URL publik API), API + worker di Railway/Render/VPS, Postgres di Neon/Supabase, Redis di Upstash. Satu domain lewat Dokploy lebih sederhana karena cookie tetap first-party.
 
+## Memori (agent yang mengingat kamu)
+
+Halaman **Memory**: profil pengguna yang dibangun otomatis, daftar fakta/preferensi (tambah, ubah, sematkan, hapus, setujui yang menunggu review), pencarian di seluruh riwayat chat, dan log aktivitas (audit). Pengaturan di **Settings → Memori** (pakai memori, belajar otomatis, review manual). Memori eksternal opsional: `MEMORY_EXTERNAL_URL` / `MEMORY_EXTERNAL_TOKEN`. Rencana fitur agent berikutnya: [docs/AGENT_ROADMAP.md](docs/AGENT_ROADMAP.md).
+
+## 9Router / endpoint OpenAI-compatible
+
+Multi-Provider → tambah **9Router** (atau *OpenAI-compatible*), isi Base URL, lalu **Sinkron dari /v1/models** atau tambah nama model manual. API key opsional. Base URL harus bisa dijangkau **dari server OFALL**:
+- 9Router di server yang sama (di luar Docker): `http://host.docker.internal:20128/v1` (default).
+- 9Router sebagai service Dokploy di server yang sama: pakai nama/URL internalnya.
+- 9Router di laptop sendiri (`localhost:20128`) **tidak** bisa dijangkau server; jalankan di server atau buka lewat tunnel/HTTPS.
+
+Rotasi key, fallback ke provider lain, token saver, dan analytics tetap berlaku untuk model 9Router.
+
 ## Manajemen user (admin)
 
 - Akun **pertama** yang mendaftar otomatis menjadi **admin**.

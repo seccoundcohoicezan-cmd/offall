@@ -125,6 +125,36 @@ export default function SettingsPage() {
             />
           </div>
         </Card>
+        <Card className="flex flex-col gap-4">
+          <h2 className="font-semibold">Memori</h2>
+          {(
+            [
+              [
+                "memory_enabled",
+                "Pakai memori di chat",
+                "Fakta & preferensi tentangmu ikut dikirim ke AI agar jawaban lebih personal.",
+              ],
+              [
+                "memory_auto_extract",
+                "Belajar otomatis (eksperimental)",
+                "Setelah tiap jawaban, model termurah mencatat hal penting tentangmu.",
+              ],
+              [
+                "memory_review",
+                "Review manual dulu",
+                "Memori yang dipelajari otomatis menunggu persetujuanmu di halaman Memory sebelum dipakai.",
+              ],
+            ] as const
+          ).map(([key, title, hint]) => (
+            <div key={key} className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-medium">{title}</p>
+                <p className="text-xs text-muted">{hint}</p>
+              </div>
+              <Switch label={title} checked={form[key]} onChange={(v) => set(key, v)} />
+            </div>
+          ))}
+        </Card>
         <Card>
           <Label htmlFor="system-prompt" hint="(dipakai di semua chat)">
             System prompt default

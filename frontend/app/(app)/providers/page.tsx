@@ -67,7 +67,7 @@ export default function ProvidersPage() {
             </Select>
           </div>
           <div>
-            <Label htmlFor="provider-url" hint="(opsional, mis. Ollama)">
+            <Label htmlFor="provider-url" hint="(opsional; 9Router: http://host.docker.internal:20128/v1)">
               Base URL
             </Label>
             <Input

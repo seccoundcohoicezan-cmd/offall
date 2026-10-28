@@ -206,3 +206,67 @@ test("admin creates, disables and re-enables a user", async ({ browser }) => {
   await row.getByRole("switch", { name: `Aktifkan ${email}` }).click();
   await expect(row.getByText("Nonaktif")).toHaveCount(0);
 });
+
+test("memory: teach a fact, answer uses it, history search finds old chat", async ({ page }) => {
+  await page.goto("/register");
+  await page.getByLabel("Email").fill(`e2e-mem-${Date.now()}@example.com`);
+  await page.getByLabel("Password").fill("rahasia123");
+  await page.getByRole("button", { name: "Buat akun" }).click();
+  await expect(page).toHaveURL(/\/chat$/);
+  await page.goto("/providers");
+  await page.getByLabel("Provider").selectOption("mock");
+  await page.getByRole("button", { name: "Tambah provider" }).click();
+  const card = page.locator("section", { hasText: "Mock (demo/test)" });
+  await card.getByLabel("API key").fill("demo-good-key-1");
+  await card.getByRole("button", { name: "Tambah key" }).click();
+  await expect(card.getByTestId("key-row")).toHaveCount(1);
+
+  await page.goto("/memory");
+  await page
+    .getByLabel("Ajari AI sesuatu tentangmu")
+    .fill("Pengguna sedang membangun aplikasi kasir berbasis Laravel.");
+  await page.getByRole("button", { name: "Simpan" }).click();
+  await expect(page.getByTestId("memory-row")).toHaveCount(1);
+
+  await page.goto("/chat");
+  await page.getByLabel("Tulis pesan").fill("Saran fitur untuk aplikasi kasir Laravel saya?");
+  await page.getByRole("button", { name: "Kirim pesan" }).click();
+  const answer = page.getByRole("article", { name: "Jawaban AI" }).last();
+  await expect(answer).toContainText("kasir", { timeout: 15_000 });
+  await expect(answer).toContainText("1 memori");
+
+  await page.goto("/memory");
+  await page.getByRole("tab", { name: "Cari riwayat" }).click();
+  await page.getByLabel("Cari di semua percakapan").fill("kasir");
+  await page.getByRole("button", { name: "Cari" }).click();
+  await expect(page.getByTestId("history-hit").first()).toContainText("kasir");
+  await page.getByRole("tab", { name: "Log aktivitas" }).click();
+  await expect(page.getByText("memory.create")).toBeVisible();
+});
+
+// Needs an OpenAI-compatible 9Router (or stand-in) reachable from the API server.
+const ROUTER = process.env.E2E_9ROUTER_URL;
+test("9Router: add endpoint, sync models, chat through it", async ({ page }) => {
+  test.skip(!ROUTER, "set E2E_9ROUTER_URL");
+  await page.goto("/register");
+  await page.getByLabel("Email").fill(`e2e-9r-${Date.now()}@example.com`);
+  await page.getByLabel("Password").fill("rahasia123");
+  await page.getByRole("button", { name: "Buat akun" }).click();
+  await expect(page).toHaveURL(/\/chat$/);
+  await page.goto("/providers");
+  await page.getByLabel("Provider").selectOption("9router");
+  await page.getByLabel(/Base URL/).fill(ROUTER!);
+  await page.getByRole("button", { name: "Tambah provider" }).click();
+  const card = page.locator("section", { hasText: "9Router (OpenAI-compatible)" });
+  await expect(card.getByTestId("key-row")).toHaveCount(1);
+  await card.getByRole("button", { name: /Sinkron/ }).click();
+  await expect(card.getByText("cc/claude-sonnet-4.5")).toBeVisible();
+
+  await page.goto("/chat");
+  await page.getByLabel("Pilih model", { exact: true }).selectOption("9router/cc/claude-sonnet-4.5");
+  await page.getByLabel("Tulis pesan").fill("halo lewat 9router");
+  await page.getByRole("button", { name: "Kirim pesan" }).click();
+  const answer = page.getByRole("article", { name: "Jawaban AI" }).last();
+  await expect(answer).toContainText("[9router:cc/claude-sonnet-4.5]", { timeout: 20_000 });
+  await expect(answer.getByTestId("model-badge")).toHaveText("9router/cc/claude-sonnet-4.5");
+});

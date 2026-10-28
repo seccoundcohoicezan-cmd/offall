@@ -96,6 +96,7 @@ export interface Message {
   tokens_out: number;
   tokens_saved: number;
   cached: boolean;
+  memories_used: number;
   created_at: string;
 }
 
@@ -125,6 +126,9 @@ export interface UserSettings {
   system_prompt: string;
   notify_telegram_chat_id: string;
   notify_webpush: boolean;
+  memory_enabled: boolean;
+  memory_auto_extract: boolean;
+  memory_review: boolean;
   vapid_public_key: string;
   telegram_enabled: boolean;
 }
@@ -146,4 +150,46 @@ export interface UsageSummary {
   per_day: (UsageTotals & { day: string })[];
   per_provider: (UsageTotals & { provider: string })[];
   per_key: (UsageTotals & { key_id: string; label: string; key_hint: string; provider: string })[];
+}
+
+export type MemoryKind = "fact" | "preference" | "context";
+
+export interface Memory {
+  id: string;
+  kind: MemoryKind;
+  content: string;
+  source: "manual" | "auto";
+  status: "active" | "pending" | "rejected";
+  pinned: boolean;
+  use_count: number;
+  last_used_at: string | null;
+  source_chat_id: string | null;
+  created_at: string;
+  updated_at: string | null;
+}
+
+export interface MemoryProfile {
+  summary: string;
+  updated_at: string | null;
+  active: number;
+  pending: number;
+}
+
+export interface HistoryHit {
+  chat_id: string;
+  chat_title: string;
+  message_id: string;
+  role: string;
+  snippet: string;
+  created_at: string;
+}
+
+export interface AuditEntry {
+  id: string;
+  user_id: string | null;
+  actor: string;
+  action: string;
+  target: string;
+  detail: Record<string, unknown>;
+  created_at: string;
 }

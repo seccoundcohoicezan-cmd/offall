@@ -53,3 +53,12 @@ Dicatat sesuai `AGENT_INSTRUCTIONS.md` aturan 6. Format: keputusan → alasan.
 24. **Logo**: memakai mark infinity dari file brand `OFALL-logo.png` (dipotong jadi `logo-mark-wide.png`, ikon PWA, favicon); wordmark "OFALL." dirender sebagai teks agar terbaca di mode terang & gelap.
 25. **Rate limit per user dinaikkan ke 600/menit** (per IP 1200/menit): dashboard melakukan beberapa polling per user, 120/menit terlalu ketat. Login/register tetap 10/menit per IP.
 26. **Layout**: hero sambutan hanya di layar chat baru; panel kanan (model/agent) tampil permanen mulai 1536px, di bawahnya dibuka lewat tombol (bottom sheet di HP). HP memakai bottom navigation.
+
+## Iterasi 3 (2026-10-28): memori persisten + 9Router
+
+27. **Embedding memori lokal** (sama dengan semantic cache) agar pemilihan memori tidak memakan token; maksimal 8 memori + yang disematkan per chat.
+28. **Ekstraksi memori berjalan sebagai task worker terpisah** (`learn_from_job`) setelah jawaban terkirim, jadi tidak menambah latensi dan bisa gagal tanpa mengganggu chat. Dedupe: kemiripan ≥0,88 memperbarui memori lama, bukan menambah.
+29. **Profil pengguna** dibangun ulang hanya saat ada memori aktif baru / user menambah manual / tombol "Susun ulang" (hemat token).
+30. **Recall riwayat** memakai pencarian kata kunci (bukan vektor) di Postgres; dipicu frasa seperti "kita pernah bahas". Cukup cepat untuk ribuan pesan per user; pgvector bisa ditambahkan nanti.
+31. **9Router = provider OpenAI-compatible** lewat LiteLLM (`openai/<model>` + `api_base`). Key opsional; tanpa key dikirim `sk-no-key` karena klien OpenAI mewajibkan nilai. Daftar model disinkron dari `GET /v1/models` (permintaan metadata, bukan inferensi, jadi boleh di request HTTP). Tier kuat/hemat ditebak dari nama model dan bisa diubah.
+32. **Audit log** dicatat dalam transaksi yang sama dengan perubahannya; detail tidak pernah memuat secret (hanya hint key / potongan ≤120 karakter).

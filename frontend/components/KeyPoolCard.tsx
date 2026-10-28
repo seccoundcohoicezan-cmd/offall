@@ -7,6 +7,8 @@ import { del, patch, post } from "@/lib/api";
 import type { KeyStatus, Provider, ProviderKey, Strategy } from "@/lib/types";
 import { formatTokens, STATUS_LABEL, timeAgo } from "@/lib/format";
 import { ProviderIcon } from "./ProviderIcon";
+import { GatewayModels } from "./GatewayModels";
+import { CUSTOM_MODEL_PROVIDERS, KEYLESS_PROVIDERS } from "@/lib/providers";
 import { Badge, Button, Card, Input, Label, Select, Switch } from "./ui";
 import { toast } from "./ui/toast";
 
@@ -131,7 +133,7 @@ export function KeyPoolCard({ provider }: { provider: Provider }) {
         </div>
       </div>
 
-      {provider.keys.length > 0 && usable <= 1 && (
+      {provider.keys.length > 0 && usable <= 1 && !(usable === 1 && KEYLESS_PROVIDERS.has(provider.name)) && (
         <p
           role="alert"
           className="rounded-xl border border-warning/40 bg-warning/10 px-3 py-2 text-sm text-warning"
@@ -217,6 +219,8 @@ export function KeyPoolCard({ provider }: { provider: Provider }) {
         })}
       </ul>
 
+      {CUSTOM_MODEL_PROVIDERS.has(provider.name) && <GatewayModels provider={provider} />}
+
       <form onSubmit={addKey} className="grid gap-2 sm:grid-cols-[1fr_2fr_1fr_auto] sm:items-end">
         <div>
           <Label htmlFor={`label-${provider.id}`}>Label</Label>
@@ -236,8 +240,8 @@ export function KeyPoolCard({ provider }: { provider: Provider }) {
             autoComplete="off"
             value={secret}
             onChange={(e) => setSecret(e.target.value)}
-            placeholder={provider.name === "ollama" ? "boleh kosong" : "sk-..."}
-            required={provider.name !== "ollama"}
+            placeholder={KEYLESS_PROVIDERS.has(provider.name) ? "opsional" : "sk-..."}
+            required={!KEYLESS_PROVIDERS.has(provider.name)}
           />
         </div>
         <div>

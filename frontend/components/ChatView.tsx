@@ -460,6 +460,7 @@ export function ChatView({ chatId }: { chatId?: string }) {
                   modelUsed={m.model_used}
                   tokensSaved={m.tokens_saved}
                   cached={m.cached}
+                  memoriesUsed={m.memories_used}
                   initials={initials}
                 />
               ))}

@@ -3,7 +3,7 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
-import { Leaf, Zap } from "lucide-react";
+import { Brain, Leaf, Zap } from "lucide-react";
 import { clockTime } from "@/lib/format";
 import { cn } from "@/lib/cn";
 
@@ -14,6 +14,7 @@ export interface BubbleProps {
   modelUsed?: string | null;
   tokensSaved?: number;
   cached?: boolean;
+  memoriesUsed?: number;
   streaming?: boolean;
   initials: string;
 }
@@ -25,6 +26,7 @@ export function MessageBubble({
   modelUsed,
   tokensSaved,
   cached,
+  memoriesUsed,
   streaming,
   initials,
 }: BubbleProps) {
@@ -56,6 +58,14 @@ export function MessageBubble({
               title="Token dihemat oleh Token Saver"
             >
               <Leaf size={11} /> {tokensSaved} token dihemat
+            </span>
+          )}
+          {!isUser && !!memoriesUsed && (
+            <span
+              className="flex items-center gap-1 rounded-md bg-accent/15 px-1.5 text-xs text-accent-2"
+              title="Jawaban memakai memori tentang kamu"
+            >
+              <Brain size={11} /> {memoriesUsed} memori
             </span>
           )}
           {cached && (
