@@ -13,8 +13,17 @@ export interface Page<T> {
 export interface User {
   id: string;
   email: string;
-  role: string;
+  role: "admin" | "user";
+  display_name: string;
+  is_active: boolean;
   created_at: string;
+}
+
+export interface AdminUser extends User {
+  last_login_at: string | null;
+  chats: number;
+  tokens_30d: number;
+  providers: number;
 }
 
 export interface ProviderKey {

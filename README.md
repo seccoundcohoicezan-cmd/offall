@@ -71,6 +71,13 @@ Repo ini satu `docker-compose.yml`, cocok untuk service **Compose** di Dokploy.
 
 Alternatif (lihat AGENT_INSTRUCTIONS): frontend di Vercel (`API_INTERNAL_URL` = URL publik API), API + worker di Railway/Render/VPS, Postgres di Neon/Supabase, Redis di Upstash. Satu domain lewat Dokploy lebih sederhana karena cookie tetap first-party.
 
+## Manajemen user (admin)
+
+- Akun **pertama** yang mendaftar otomatis menjadi **admin**.
+- Menu avatar → **Manajemen user** (`/admin`): buat akun (email + password awal), ubah peran user/admin, nonaktifkan (sesi & job yang antre langsung dicabut), reset password, hapus user, dan buka/tutup **pendaftaran mandiri**. Saat pendaftaran ditutup, hanya admin yang bisa membuat akun.
+- Selalu ada minimal satu admin aktif; admin tidak bisa menonaktifkan atau menghapus dirinya sendiri.
+- Darurat (lupa akun admin): jalankan di container `api`: `python scripts/make_admin.py email@kamu.com [passwordBaru]`.
+
 ## Backup & restore
 
 ```bash

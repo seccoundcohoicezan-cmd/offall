@@ -45,3 +45,11 @@ Dicatat sesuai `AGENT_INSTRUCTIONS.md` aturan 6. Format: keputusan → alasan.
 
 - `npm audit --omit=dev`: 0 kerentanan.
 - `pip-audit` (lockfile backend): 3 CVE di `filelock 3.32.7` (CVE-2026-112907/112913/112940, fix di 4.2.1). Paket ini dependensi transitif LiteLLM (via `huggingface-hub`/`tokenizers`), dan `litellm==1.106.5` mengunci `filelock<4`, jadi belum bisa dinaikkan. Paparan rendah: aplikasi tidak memakai filelock dengan path dari input user. Naikkan begitu LiteLLM melonggarkan batasnya.
+
+## Iterasi 2 (2026-10-28)
+
+22. **`crypto.randomUUID` hanya ada di HTTPS/localhost.** Situs live masih HTTP, jadi idempotency key dibuat lewat `lib/uuid.ts` (fallback `getRandomValues`). Jika kirim pesan pertama gagal, chat kosong yang baru dibuat langsung dihapus agar tidak menumpuk "Chat baru".
+23. **Manajemen user milik admin**: kolom `users.is_active`, `display_name`, `last_login_at` + tabel `app_settings` (saat ini `registration_open`) yang menimpa env `REGISTRATION_OPEN`, sehingga admin bisa membuka/menutup pendaftaran dari UI tanpa redeploy.
+24. **Logo**: memakai mark infinity dari file brand `OFALL-logo.png` (dipotong jadi `logo-mark-wide.png`, ikon PWA, favicon); wordmark "OFALL." dirender sebagai teks agar terbaca di mode terang & gelap.
+25. **Rate limit per user dinaikkan ke 600/menit** (per IP 1200/menit): dashboard melakukan beberapa polling per user, 120/menit terlalu ketat. Login/register tetap 10/menit per IP.
+26. **Layout**: hero sambutan hanya di layar chat baru; panel kanan (model/agent) tampil permanen mulai 1536px, di bawahnya dibuka lewat tombol (bottom sheet di HP). HP memakai bottom navigation.

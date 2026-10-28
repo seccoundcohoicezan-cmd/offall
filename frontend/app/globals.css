@@ -64,7 +64,9 @@ body {
 }
 
 .hero-gradient {
-  background: linear-gradient(120deg, #2a1a7a 0%, #3b1fa8 45%, #1a2b8f 100%);
+  background:
+    radial-gradient(600px 200px at 30% 120%, rgba(192, 132, 252, 0.35), transparent 70%),
+    linear-gradient(110deg, #1f1466 0%, #3b1fa8 45%, #22156e 100%);
 }
 
 .prose-chat :where(p, ul, ol, pre, table, blockquote) {
@@ -101,6 +103,22 @@ body {
 .prose-chat a {
   color: var(--accent-2);
   text-decoration: underline;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--accent) 35%, transparent) transparent;
+}
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--accent) 35%, transparent);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 :focus-visible {

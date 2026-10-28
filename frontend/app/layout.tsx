@@ -9,7 +9,7 @@ export const metadata: Metadata = {
   title: "OFALL — AI Gateway & Agent Multi-Provider",
   description: "Satu chat, banyak AI. Rotasi API key otomatis, hemat token, tetap jalan saat offline.",
   manifest: "/manifest.webmanifest",
-  icons: { icon: "/icon-192.png", apple: "/icon-192.png" },
+  icons: { apple: "/icon-192.png" },
 };
 
 export const viewport: Viewport = { themeColor: "#070a1a", width: "device-width", initialScale: 1 };

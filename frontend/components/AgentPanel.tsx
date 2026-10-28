@@ -16,14 +16,14 @@ export function AgentPanel({
   const { data, isLoading } = useAgents();
   const agents = data?.filter((a) => a.is_enabled) ?? [];
   return (
-    <div className="rounded-2xl border border-border bg-surface/70 p-3">
+    <div className="rounded-3xl border border-border bg-surface/70 p-4">
       <div className="mb-3 flex items-center justify-between">
-        <p className="font-semibold">
+        <p className="text-lg font-semibold">
           AI Agents{" "}
           <span className="ml-1 rounded-md bg-accent/20 px-1.5 text-[10px] text-accent-2">Beta</span>
         </p>
         <Link href="/agents" className="flex items-center gap-1 text-xs text-muted underline hover:text-text">
-          <Settings2 size={12} /> Manage
+          <Settings2 size={12} /> Kelola
         </Link>
       </div>
       <div className="flex flex-col divide-y divide-border">

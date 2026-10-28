@@ -2,65 +2,80 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { Plus, Trash2 } from "lucide-react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
+import { ChevronRight, MessageCircle, Search, Sparkles } from "lucide-react";
 import { useChats } from "@/lib/hooks";
-import { del } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { timeAgo } from "@/lib/format";
 import { Skeleton } from "./ui";
-import { toast } from "./ui/toast";
 
-export function ChatList() {
+export function ChatList({ onNavigate }: { onNavigate?: () => void }) {
   const { data, isLoading, isError } = useChats();
   const params = useParams<{ id?: string }>();
-  const qc = useQueryClient();
-
-  async function remove(id: string) {
-    if (!confirm("Hapus chat ini beserta seluruh riwayatnya?")) return;
-    try {
-      await del(`/chats/${id}`);
-      await qc.invalidateQueries({ queryKey: ["chats"] });
-    } catch (e) {
-      toast.error(e);
-    }
-  }
+  const [q, setQ] = useState("");
+  const items = (data?.items ?? []).filter((c) => c.title.toLowerCase().includes(q.trim().toLowerCase()));
 
   return (
-    <nav aria-label="Daftar chat" className="flex h-full flex-col gap-2">
+    <nav aria-label="Daftar chat" className="flex h-full min-h-0 flex-col gap-3">
       <Link
         href="/chat"
-        className="flex h-10 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-accent to-accent-2 text-sm font-medium text-white"
+        onClick={onNavigate}
+        className="flex h-12 shrink-0 items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-accent to-accent-2 font-medium text-white shadow-lg shadow-accent/30 hover:brightness-110"
       >
-        <Plus size={16} /> Chat baru
+        <Sparkles size={18} /> Chat Baru
       </Link>
-      <div className="flex flex-col gap-1 overflow-y-auto">
-        {isLoading && [0, 1, 2].map((i) => <Skeleton key={i} className="h-12" />)}
+      <label className="relative shrink-0">
+        <span className="sr-only">Cari chat</span>
+        <Search
+          size={16}
+          className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted"
+        />
+        <input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Cari chat..."
+          className="h-11 w-full rounded-xl border border-border bg-surface-2/70 pl-9 pr-3 text-sm placeholder:text-muted focus:border-accent focus:outline-none"
+        />
+      </label>
+      <div className="-mx-1 flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-1">
+        {isLoading && [0, 1, 2].map((i) => <Skeleton key={i} className="h-14 shrink-0" />)}
         {isError && <p className="text-sm text-danger">Gagal memuat chat.</p>}
-        {data?.items.length === 0 && (
-          <p className="px-2 py-4 text-center text-sm text-muted">Belum ada chat.</p>
+        {data && items.length === 0 && (
+          <p className="px-2 py-6 text-center text-sm text-muted">
+            {q ? "Tidak ada chat yang cocok." : "Belum ada chat."}
+          </p>
         )}
-        {data?.items.map((c) => (
-          <div
-            key={c.id}
-            className={cn(
-              "group flex items-center gap-1 rounded-xl px-3 py-2 text-sm",
-              params.id === c.id ? "bg-accent/15 text-text" : "text-muted hover:bg-surface-2 hover:text-text",
-            )}
-          >
-            <Link href={`/chat/${c.id}`} className="min-w-0 flex-1">
-              <span className="block truncate">{c.title}</span>
-              <span className="text-[11px] text-muted">{timeAgo(c.updated_at ?? c.created_at)}</span>
-            </Link>
-            <button
-              onClick={() => remove(c.id)}
-              aria-label={`Hapus chat ${c.title}`}
-              className="opacity-0 transition group-hover:opacity-100 focus:opacity-100"
+        {items.map((c) => {
+          const active = params.id === c.id;
+          return (
+            <Link
+              key={c.id}
+              href={`/chat/${c.id}`}
+              onClick={onNavigate}
+              aria-current={active ? "page" : undefined}
+              className={cn(
+                "flex shrink-0 items-center gap-3 rounded-2xl px-3 py-2.5 transition",
+                active
+                  ? "bg-gradient-to-r from-accent/45 to-accent/15 ring-1 ring-accent/60"
+                  : "hover:bg-surface-2",
+              )}
             >
-              <Trash2 size={14} />
-            </button>
-          </div>
-        ))}
+              <span
+                className={cn(
+                  "flex h-10 w-10 shrink-0 items-center justify-center rounded-full",
+                  active ? "bg-accent/40 text-white" : "bg-surface-2 text-muted",
+                )}
+              >
+                <MessageCircle size={18} />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-medium">{c.title}</span>
+                <span className="block text-xs text-muted">{timeAgo(c.updated_at ?? c.created_at)}</span>
+              </span>
+              <ChevronRight size={16} className="shrink-0 text-muted" />
+            </Link>
+          );
+        })}
       </div>
     </nav>
   );
