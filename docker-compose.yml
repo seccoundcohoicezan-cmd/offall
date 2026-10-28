@@ -1,0 +1,82 @@
+# One file for local dev and Dokploy. Only the frontend needs a public domain:
+# it proxies /api/* and /health to the api service over the internal network.
+name: offall
+
+x-backend: &backend
+  build: ./backend
+  restart: unless-stopped
+  env_file: .env
+  extra_hosts:
+    - "host.docker.internal:host-gateway" # Ollama running on the host
+  depends_on:
+    db:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+
+services:
+  api:
+    <<: *backend
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-offall}:${POSTGRES_PASSWORD:-offall}@db:5432/${POSTGRES_DB:-aigateway}
+      REDIS_URL: redis://redis:6379/0
+      ROLE: api
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health').status == 200 else 1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  worker:
+    <<: *backend
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-offall}:${POSTGRES_PASSWORD:-offall}@db:5432/${POSTGRES_DB:-aigateway}
+      REDIS_URL: redis://redis:6379/0
+      ROLE: worker
+    depends_on:
+      api:
+        condition: service_healthy # api runs the migrations
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        API_INTERNAL_URL: http://api:8000
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-offall}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-offall}
+      POSTGRES_DB: ${POSTGRES_DB:-aigateway}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  pgdata:
+  redisdata:

@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: aitest
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --frozen --python 3.12
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run mypy app
+      - name: Tests (Postgres)
+        env:
+          TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/aitest
+        run: uv run pytest -q --cov --cov-report=term --cov-fail-under=80
+      - name: Migrations apply and match the models
+        env:
+          DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/aitest
+          MASTER_ENCRYPTION_KEY: ZGV2LW9ubHktbWFzdGVyLWtleS1jaGFuZ2UtbWUhISE=
+          JWT_SECRET: ci
+        run: |
+          uv run python - <<'PY'
+          import asyncio, asyncpg
+          async def main():
+              c = await asyncpg.connect("postgresql://postgres:postgres@localhost:5432/aitest")
+              await c.execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public;")
+              await c.close()
+          asyncio.run(main())
+          PY
+          uv run alembic upgrade head
+          uv run alembic check
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npx prettier --check .
+      - run: npm test
+      - run: npm run build
+
+  e2e:
+    needs: [backend, frontend]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cp .env.example .env
+      - run: docker compose up -d --build --wait
+      - run: curl -fsS http://localhost:3000/health
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - working-directory: frontend
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+          npx playwright test
+      - if: failure()
+        run: docker compose logs --no-color | tail -300
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: frontend/test-results

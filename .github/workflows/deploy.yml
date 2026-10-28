@@ -1,0 +1,31 @@
+name: Deploy (Dokploy)
+
+# Runs after CI passes on main. Needs repo secrets DOKPLOY_URL, DOKPLOY_API_KEY and
+# DOKPLOY_COMPOSE_ID; without them the job is skipped (Dokploy's own GitHub
+# auto-deploy can be used instead).
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger Dokploy compose deploy
+        env:
+          DOKPLOY_URL: ${{ secrets.DOKPLOY_URL }}
+          DOKPLOY_API_KEY: ${{ secrets.DOKPLOY_API_KEY }}
+          DOKPLOY_COMPOSE_ID: ${{ secrets.DOKPLOY_COMPOSE_ID }}
+        run: |
+          if [ -z "$DOKPLOY_URL" ] || [ -z "$DOKPLOY_API_KEY" ] || [ -z "$DOKPLOY_COMPOSE_ID" ]; then
+            echo "Dokploy secrets not set; skipping deploy."
+            exit 0
+          fi
+          curl -fsS -X POST "${DOKPLOY_URL%/}/api/compose.deploy" \
+            -H "Content-Type: application/json" \
+            -H "x-api-key: ${DOKPLOY_API_KEY}" \
+            -d "{\"composeId\": \"${DOKPLOY_COMPOSE_ID}\", \"title\": \"GitHub ${GITHUB_SHA::7}\"}"
