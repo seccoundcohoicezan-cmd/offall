@@ -69,6 +69,7 @@ class LLMClient(Protocol):
 
 
 _QUOTA_HINTS = ("insufficient_quota", "credit", "billing", "quota", "payment required")
+_BILLING_HINTS = ("insufficient_quota", "credit balance", "payment required", "billing_hard_limit")
 
 
 def classify_error(exc: Exception) -> LLMError:
@@ -83,10 +84,14 @@ def classify_error(exc: Exception) -> LLMError:
     )
     if status == 404 or (status not in (401, 403, 429) and gone):
         return ModelNotFound(_short(exc))
+    if status == 429:
+        # 429 is a rate/usage window (Gemini says "exceeded your current quota" for
+        # per-minute/day limits) unless the provider says the money ran out.
+        if any(h in text for h in _BILLING_HINTS):
+            return QuotaExhausted(_short(exc))
+        return RateLimited(_short(exc), _retry_after(exc))
     if status == 402 or any(h in text for h in _QUOTA_HINTS):
         return QuotaExhausted(_short(exc))
-    if status == 429:
-        return RateLimited(_short(exc), _retry_after(exc))
     if status in (401, 403):
         return InvalidKey(_short(exc))
     if status in (400, 413, 422):
@@ -103,7 +108,11 @@ def _retry_after(exc: Exception) -> float | None:
     headers = getattr(response, "headers", None) or {}
     value = headers.get("retry-after") if hasattr(headers, "get") else None
     if value is None:
-        match = re.search(r"retry after (\d+(?:\.\d+)?)", str(exc).lower())
+        text = str(exc).lower()
+        match = re.search(r"retry after (\d+(?:\.\d+)?)", text) or re.search(
+            r'retrydelay"?\s*:\s*"?(\d+(?:\.\d+)?)s',
+            text,  # Gemini RetryInfo
+        )
         value = match.group(1) if match else None
     try:
         return float(value) if value is not None else None
@@ -140,7 +149,7 @@ class LiteLLMClient:
             "messages": with_prompt_cache(req.provider, req.messages),
             "max_tokens": req.max_tokens,
             "num_retries": 0,
-            "timeout": 120 if stream else 30,
+            "timeout": 120 if stream else 20,
         }
         if stream:
             kwargs["stream"] = True

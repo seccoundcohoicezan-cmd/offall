@@ -146,12 +146,14 @@ async def test_key_test_shows_real_provider_error(client, monkeypatch):
     import litellm
 
     calls = {}
+    models_tried = []
 
     class ConnErr(Exception):
         pass
 
     async def failing(**kw):
         calls.update(kw)
+        models_tried.append(kw["model"])
         try:
             raise OSError("[Errno -2] Name or service not known: api.anthropic.com")
         except OSError as root:
@@ -174,7 +176,8 @@ async def test_key_test_shows_real_provider_error(client, monkeypatch):
     assert "Server TIDAK bisa menjangkau https://api.anthropic.com" in r["message"]
     assert "penyebab: OSError" in r["message"]  # root cause survives LiteLLM's scrubbing
     assert "REALLOOKINGKEY" not in r["message"]
-    assert calls["model"] == "anthropic/claude-haiku-4-5"  # cheapest model, non-streaming
+    # cheapest model first, then the next one; non-streaming
+    assert models_tried == ["anthropic/claude-haiku-4-5", "anthropic/claude-sonnet-4-5"]
     assert "stream" not in calls and calls["max_tokens"] == 8
     keys = (await client.get("/api/v1/providers", headers=headers)).json()[0]["keys"]
     assert "api.anthropic.com" in keys[0]["last_error"]

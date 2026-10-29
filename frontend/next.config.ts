@@ -7,6 +7,11 @@ const nextConfig: NextConfig = {
   // gzip buffers responses and would break Server-Sent Events through the proxy
   compress: false,
   poweredByHeader: false,
+  experimental: {
+    // The /api proxy defaults to 30 s, which cut off slow provider calls (key tests,
+    // model sync) and surfaced as a bare "Internal Server Error".
+    proxyTimeout: 300_000,
+  },
   async rewrites() {
     // Same-origin proxy keeps the httpOnly auth cookies first-party.
     return [

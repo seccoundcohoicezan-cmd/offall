@@ -8,6 +8,7 @@ from app.core.errors import not_found
 from app.db.base import utcnow
 from app.models import AIModel, Provider, ProviderKey
 from app.schemas import ModelOut, ModelPatch
+from app.services import model_discovery
 from app.services.catalog import PROVIDERS, model_ref
 from app.services.key_pool import RECOVERABLE, is_usable
 
@@ -37,6 +38,8 @@ async def list_models(
         )
     ).all()
     favorites = set(user.settings.get("favorite_models") or [])
+    # Stable models before preview/experimental snapshots within each provider.
+    rows = sorted(rows, key=lambda r: (r[1].created_at, model_discovery.is_unstable(r[0].model_name)))
     out = []
     for model, provider in rows:
         if provider.name == "mock" and not settings.enable_mock_provider:

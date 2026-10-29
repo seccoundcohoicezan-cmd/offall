@@ -20,7 +20,8 @@ from app.services.llm import NO_KEY
 MAX_MODELS = 300
 SKIP = re.compile(
     r"(embed|whisper|tts|transcri|dall-e|imagen|image-gen|moderation|guard|audio|realtime|"
-    r"speech|aqa|vision-only|search-preview|computer-use|babbage|davinci|omni-moderation|veo|lyria)",
+    r"speech|aqa|vision-only|search-preview|computer-use|babbage|davinci|omni-moderation|veo|lyria|"
+    r"deep-research|customtools|robotics|native-audio|live|learnlm|nano-banana)",
     re.IGNORECASE,
 )
 # Whole-word matching: "mini" must not match inside "gemini".
@@ -61,6 +62,17 @@ class SyncResult:
     added: list[str]
     disabled: list[str]
     total: int
+
+
+UNSTABLE = re.compile(
+    r"(preview|exp\b|experimental|-latest|customtools|deep-research|\d{2}-\d{4}|\d{4}-\d{2}-\d{2}|-\d{4}$)",
+    re.IGNORECASE,
+)
+
+
+def is_unstable(name: str) -> bool:
+    """Preview/experimental/dated snapshots: often no free quota and short-lived."""
+    return bool(UNSTABLE.search(name))
 
 
 def guess_tier(name: str) -> str:
@@ -208,6 +220,9 @@ async def sync(
             row.is_enabled = True
             row.display_name = row.display_name.removesuffix(" (tidak tersedia)")
     for name, row in rows.items():
+        if name not in live and SKIP.search(name):
+            await db.delete(row)  # not a chat model at all (embeddings, research agents, ...)
+            continue
         if name not in live and row.is_enabled:
             row.is_enabled = False
             if not row.display_name.endswith("(tidak tersedia)"):

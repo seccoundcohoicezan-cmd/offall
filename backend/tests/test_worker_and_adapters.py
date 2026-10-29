@@ -49,7 +49,22 @@ class ProviderError(Exception):
     ("exc", "kind"),
     [
         (ProviderError("slow down", 429, {"retry-after": "12"}), RateLimited),
-        (ProviderError("You exceeded your current quota", 429), QuotaExhausted),
+        # OpenAI billing exhaustion carries the insufficient_quota code
+        (
+            ProviderError(
+                '{"error":{"message":"You exceeded your current quota","code":"insufficient_quota"}}', 429
+            ),
+            QuotaExhausted,
+        ),
+        # Gemini free-tier per-minute/day windows use the same words but are a rate limit
+        (
+            ProviderError(
+                '{"error":{"code":429,"message":"You exceeded your current quota",'
+                '"status":"RESOURCE_EXHAUSTED"}}',
+                429,
+            ),
+            RateLimited,
+        ),
         (ProviderError("Your credit balance is too low", 400), QuotaExhausted),
         (ProviderError("payment", 402), QuotaExhausted),
         (ProviderError("bad key", 401), InvalidKey),
@@ -61,6 +76,15 @@ class ProviderError(Exception):
 )
 def test_classify_error(exc, kind):
     assert isinstance(classify_error(exc), kind)
+
+
+def test_gemini_retry_delay_parsed():
+    body = (
+        '{"error":{"code":429,"details":'
+        '[{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"37s"}]}}'
+    )
+    err = classify_error(ProviderError(body, 429))
+    assert isinstance(err, RateLimited) and err.retry_after == 37.0
 
 
 def test_retry_after_parsed():

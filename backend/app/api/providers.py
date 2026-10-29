@@ -34,6 +34,7 @@ from app.services.llm import (
     QuotaExhausted,
     RateLimited,
     StreamRequest,
+    TransientError,
 )
 
 router = APIRouter(prefix="/providers", tags=["providers"])
@@ -253,6 +254,8 @@ def provider_message(exc: Exception) -> str:
     return redact(match.group(1) if match else text)[:300]
 
 
+MAX_TEST_MODELS = 3
+
 OFFICIAL_ENDPOINTS = {
     "anthropic": "https://api.anthropic.com",
     "openai": "https://api.openai.com",
@@ -301,89 +304,105 @@ async def test_key(
     from app.services.runtime import build_llm
 
     provider, key = await _owned_key(db, user.id, provider_id, key_id)
-    # The cheapest model is enough to prove the key works.
-    model = await db.scalar(
-        select(AIModel)
-        .where(AIModel.provider_id == provider.id, AIModel.is_enabled.is_(True))
-        .order_by(AIModel.tier, AIModel.cost_out)
-    )
-    if model is None:
-        raise ApiError(400, "no_model", "Provider belum punya model. Sinkron atau tambah model dulu.")
+    transport = getattr(request.app.state, "http_transport", None)
     llm = build_llm(settings)
     req = StreamRequest(
         provider=provider.name,
-        model_name=model.model_name,
+        model_name="",
         messages=[{"role": "user", "content": "ping"}],
         api_key=cipher.decrypt(key.api_key_encrypted),
         base_url=provider.base_url,
         max_tokens=8,
     )
 
+    async def ranked(exclude: set[str]) -> list[AIModel]:
+        """Stable, cheap models first: they are the ones most likely to have free quota."""
+        rows = (
+            await db.scalars(
+                select(AIModel).where(AIModel.provider_id == provider.id, AIModel.is_enabled.is_(True))
+            )
+        ).all()
+        rows = [m for m in rows if m.model_name not in exclude]
+        return sorted(
+            rows,
+            key=lambda m: (
+                model_discovery.is_unstable(m.model_name),
+                m.tier != "cheap",
+                m.cost_out,
+                m.model_name,
+            ),
+        )
+
     def reason(exc: LLMError) -> str:
         return redact(str(exc))[:400]
 
-    transport = getattr(request.app.state, "http_transport", None)
-
-    async def cheapest() -> AIModel | None:
-        return await db.scalar(
-            select(AIModel)
-            .where(AIModel.provider_id == provider.id, AIModel.is_enabled.is_(True))
-            .order_by(AIModel.tier, AIModel.cost_out)
-        )
-
-    async def ping_with_self_heal() -> str:
-        """If the model was retired by the provider, refresh the model list and retry once."""
+    tried: set[str] = set()
+    notes: list[str] = []
+    rate_limited = synced = False
+    hard: LLMError | None = None
+    soft: LLMError | None = None
+    winner = ""
+    candidates = await ranked(tried)
+    if not candidates:
+        raise ApiError(400, "no_model", "Provider belum punya model. Sinkron atau tambah model dulu.")
+    while candidates and len(tried) < MAX_TEST_MODELS and not winner and hard is None:
+        model = candidates[0]
+        tried.add(model.model_name)
+        req.model_name = model.model_name
         try:
             await llm.ping(req)  # type: ignore[attr-defined]
-            return ""
+            winner = model.model_name
         except ModelNotFound:
-            old = req.model_name
-            await model_discovery.retire(db, provider.id, old)
-            try:
-                await model_discovery.sync(db, provider, req.api_key, transport)
-            except model_discovery.DiscoveryError:
-                await db.commit()
-                raise
-            replacement = await cheapest()
+            await model_discovery.retire(db, provider.id, model.model_name)
+            notes.append(f"{model.model_name} sudah dihentikan provider")
+            if not synced:
+                synced = True
+                try:
+                    await model_discovery.sync(db, provider, req.api_key, transport)
+                except model_discovery.DiscoveryError:
+                    pass
             await db.commit()
-            if replacement is None or replacement.model_name == old:
-                raise
-            req.model_name = replacement.model_name
-            await llm.ping(req)  # type: ignore[attr-defined]
-            return f"Model {old} sudah tidak tersedia di provider; daftar model diperbarui otomatis. "
+        except RateLimited as exc:
+            rate_limited = True
+            notes.append(f"{model.model_name} kena limit/kuota gratis habis")
+            soft = exc
+        except TransientError as exc:
+            notes.append(f"{model.model_name} sedang overload/timeout")
+            soft = exc
+        except LLMError as exc:  # invalid key, no credit, bad request: stop trying
+            hard = exc
+        candidates = await ranked(tried)
 
     ok = True
-    try:
-        note = await ping_with_self_heal()
-        message = f"{note}Koneksi berhasil ({req.model_name})."
-    except InvalidKey as exc:
+    note = f" Catatan: {'; '.join(notes)}." if notes else ""
+    if winner:
+        message = f"Koneksi berhasil ({winner}).{note}"
+    elif isinstance(hard, InvalidKey):
         key.status = KeyStatus.invalid
-        ok, message = False, f"Key ditolak provider (401/403). {reason(exc)}"
-    except RateLimited:
-        message = "Key valid tapi sedang kena rate limit."
-    except QuotaExhausted as exc:
+        ok, message = False, f"Key ditolak provider (401/403). {reason(hard)}"
+    elif isinstance(hard, QuotaExhausted):
         ok, message = (
             False,
             (
                 "Saldo kredit/kuota API akun ini kosong. Permintaan ditolak provider sebelum diproses, "
                 "jadi tidak ada token yang terpakai. Isi kredit di dashboard billing provider "
                 "(Anthropic: console.anthropic.com → Plans & Billing). "
-                f"Pesan provider: {provider_message(exc)}"
+                f"Pesan provider: {provider_message(hard)}"
             ),
         )
-    except ModelNotFound as exc:
-        ok, message = (
-            False,
-            (
-                "Model tidak tersedia untuk key ini dan daftar model tidak bisa diperbarui. "
-                f"{provider_message(exc)}"
-            ),
+    elif isinstance(hard, BadRequest):
+        ok, message = False, f"Permintaan ditolak provider (cek nama model / akses model). {reason(hard)}"
+    elif rate_limited:
+        message = (
+            "Key VALID, tapi model yang dicoba sedang kena limit/kuota gratisnya habis untuk saat ini. "
+            f"Chat otomatis memakai model lain atau menunggu kuota pulih.{note}"
         )
-    except BadRequest as exc:
-        ok, message = False, f"Permintaan ditolak provider (cek nama model / akses model). {reason(exc)}"
-    except LLMError as exc:
-        probe = await reachability(endpoint_for(provider), getattr(request.app.state, "http_transport", None))
-        ok, message = False, f"Tidak bisa terhubung ke provider. {probe} Detail: {reason(exc)}"
+    elif isinstance(soft, TransientError) or hard is not None:
+        probe = await reachability(endpoint_for(provider), transport)
+        detail = reason(soft or hard)  # type: ignore[arg-type]
+        ok, message = False, f"Tidak bisa terhubung ke provider. {probe}{note} Detail: {detail}"
+    else:
+        ok, message = False, f"Tidak ada model yang bisa dites.{note}"
     if ok:
         if key.status == KeyStatus.invalid:
             key.status = KeyStatus.active

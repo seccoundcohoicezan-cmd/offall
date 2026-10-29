@@ -16,6 +16,7 @@ os.environ.update(
 )
 
 import fakeredis
+import httpx
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -121,6 +122,9 @@ def queue() -> FakeQueue:
 @pytest.fixture
 async def client(sessions, redis, queue) -> AsyncIterator[AsyncClient]:
     app = create_app(redis=redis, queue=queue)
+    # Tests never reach real provider APIs: model discovery/probes hit this offline stub
+    # unless a test installs its own transport.
+    app.state.http_transport = httpx.MockTransport(lambda request: httpx.Response(503))
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
         yield c
 

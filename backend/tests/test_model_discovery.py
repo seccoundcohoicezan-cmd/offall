@@ -163,7 +163,8 @@ async def test_key_test_heals_a_retired_model(client, monkeypatch):
         await client.post(f"/api/v1/providers/{provider['id']}/keys/{key['id']}/test", headers=headers)
     ).json()
     assert r["ok"] is True, r
-    assert "diperbarui otomatis" in r["message"] and "gemini-3.8-flash" in r["message"]
+    assert "Koneksi berhasil (gemini-3.8-flash)" in r["message"]
+    assert "gemini-2.5-flash sudah dihentikan provider" in r["message"]
     assert calls == ["gemini/gemini-2.5-flash", "gemini/gemini-3.8-flash"]
 
 
@@ -212,3 +213,82 @@ def test_guess_tier_whole_words():
         "gemini-3.8-flash-lite": "cheap",
     }
     assert {k: guess_tier(k) for k in cases} == cases
+
+
+async def test_key_test_tries_next_model_when_one_is_limited(client, monkeypatch):
+    client._transport.app.state.http_transport = httpx.MockTransport(gemini_api)
+
+    class Limited(Exception):
+        status_code = 429
+
+    class Busy(Exception):
+        status_code = 503
+
+    tried = []
+
+    async def fake(**kw):
+        tried.append(kw["model"])
+        if kw["model"] == "gemini/gemini-3.8-flash":
+            raise Limited(
+                '{"error":{"code":429,"message":"You exceeded your current quota",'
+                '"status":"RESOURCE_EXHAUSTED"}}'
+            )
+        if kw["model"] == "gemini/gemini-3.8-pro":
+            raise Busy("The model is overloaded")
+        return types.SimpleNamespace()
+
+    monkeypatch.setattr(litellm, "acompletion", fake)
+    headers = await register(client)
+    provider = (await client.post("/api/v1/providers", json={"name": "gemini"}, headers=headers)).json()
+    key = (
+        await client.post(
+            f"/api/v1/providers/{provider['id']}/keys",
+            json={"label": "G", "api_key": "AIzaTESTKEY0000000000000000000"},
+            headers=headers,
+        )
+    ).json()
+    r = (
+        await client.post(f"/api/v1/providers/{provider['id']}/keys/{key['id']}/test", headers=headers)
+    ).json()
+    # only 2 chat models exist: flash (429) then pro (503) -> no winner, but key is valid
+    assert r["ok"] is True and "Key VALID" in r["message"]
+    assert tried == ["gemini/gemini-3.8-flash", "gemini/gemini-3.8-pro"]
+    keys = (await client.get("/api/v1/providers", headers=headers)).json()
+    gem = next(p for p in keys if p["name"] == "gemini")
+    assert gem["keys"][0]["status"] == "active"  # a model-level limit never blocks the key
+
+
+async def test_gemini_rate_limit_is_per_model_in_chat(client, sessions, redis, notifier):
+    from app.services.llm import RateLimited
+
+    class PerModel(ScriptedLLM):
+        async def stream(self, req, usage):
+            if req.model_name == "gemini-3.8-flash":
+                self.calls.append(req)
+                raise RateLimited("429 quota", retry_after=40)
+            async for t in super().stream(req, usage):
+                yield t
+
+    llm = PerModel()
+    runner = make_runner(sessions, redis, llm, notifier)
+    client._transport.app.state.http_transport = httpx.MockTransport(gemini_api)
+    headers = await register(client)
+    provider = (await client.post("/api/v1/providers", json={"name": "gemini"}, headers=headers)).json()
+    await client.post(
+        f"/api/v1/providers/{provider['id']}/keys",
+        json={"label": "G", "api_key": "AIzaTESTKEY0000000000000000000"},
+        headers=headers,
+    )
+    _, job_id = await send(client, headers, content="halo", model="auto")
+    assert await runner.run(uuid.UUID(job_id)) == "done"
+    async with sessions() as s:
+        job = await s.get(Job, uuid.UUID(job_id))
+    assert job.model_used == "gemini/gemini-3.8-pro"
+    status = (await client.get("/api/v1/providers", headers=headers)).json()[0]["keys"][0]
+    assert status["status"] == "active" and "kena limit" in status["last_error"]
+    assert 0 < await redis.ttl(f"cool:{status['id']}:gemini-3.8-flash") <= 40
+    # the next chat skips the cooled model without calling it again
+    llm.calls.clear()
+    _, job2 = await send(client, headers, content="halo lagi", model="auto")
+    assert await runner.run(uuid.UUID(job2)) == "done"
+    assert [c.model_name for c in llm.calls] == ["gemini-3.8-pro"]

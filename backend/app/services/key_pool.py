@@ -52,6 +52,17 @@ class LeaseStore(Protocol):
     async def incr(self, name: str) -> int: ...
     async def decr(self, name: str) -> int: ...
     async def expire(self, name: str, time: int) -> Any: ...
+    async def set(self, name: str, value: Any, *args: Any, **kwargs: Any) -> Any: ...
+    async def ttl(self, name: str) -> int: ...
+
+
+# These providers enforce rate limits per model (a 429 on one model says nothing
+# about the others), so the cooldown is scoped to key+model instead of the key.
+PER_MODEL_LIMITS = frozenset({"gemini", "groq", "openrouter"})
+
+
+def model_cooldown_key(key_id: uuid.UUID, model_name: str) -> str:
+    return f"cool:{key_id}:{model_name}"
 
 
 @dataclass
@@ -182,7 +193,14 @@ class KeyPool:
             if not keys:
                 raise NoKeyAvailable(provider.name, await self.earliest_recovery(provider.id))
             all_busy = True
+            per_model = provider.name in PER_MODEL_LIMITS
+            cooled: list[int] = []
             for key in keys:
+                if per_model:
+                    ttl = await self.leases.ttl(model_cooldown_key(key.id, model_name))
+                    if ttl and ttl > 0:
+                        cooled.append(ttl)
+                        continue
                 lease = f"keylease:{key.id}"
                 if not await self._acquire(lease):
                     continue
@@ -209,7 +227,16 @@ class KeyPool:
                     return PoolResult(key.id, produced, usage)
                 except RateLimited as exc:
                     wait = exc.retry_after or self.default_cooldown
-                    await self.mark_cooling(key.id, wait, str(exc))
+                    if per_model:
+                        await self.leases.set(
+                            model_cooldown_key(key.id, model_name), "1", ex=max(1, int(wait))
+                        )
+                        cooled.append(int(wait))
+                        await self.note_error(
+                            key.id, f"Model {model_name} kena limit ~{int(wait)} dtk. {exc}"
+                        )
+                    else:
+                        await self.mark_cooling(key.id, wait, str(exc))
                 except QuotaExhausted as exc:
                     await self.mark_exhausted(key.id, str(exc))
                 except InvalidKey as exc:
@@ -224,8 +251,12 @@ class KeyPool:
                     "key failed, rotating",
                     extra={"provider": provider.name, "key_id": str(key.id)},
                 )
-            if not all_busy:
-                raise NoKeyAvailable(provider.name, await self.earliest_recovery(provider.id))
+            if not all_busy or cooled:
+                retry_at = await self.earliest_recovery(provider.id)
+                if cooled:
+                    soonest = utcnow() + timedelta(seconds=min(cooled))
+                    retry_at = min(retry_at, soonest) if retry_at else soonest
+                raise NoKeyAvailable(provider.name, retry_at)
             if asyncio.get_running_loop().time() > deadline:
                 raise TransientError(f"all {provider.name} keys busy")
             await asyncio.sleep(self.busy_wait)

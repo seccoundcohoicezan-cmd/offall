@@ -45,9 +45,16 @@ def classify(text: str) -> str:
     return "complex"
 
 
+UNSTABLE = re.compile(r"(preview|exp\b|experimental|-latest|\d{2}-\d{4}|\d{4}-\d{2}-\d{2})", re.IGNORECASE)
+
+
 def _apply_order(candidates: list[Candidate], order: list[str]) -> list[Candidate]:
+    """User order first; otherwise stable models before preview/experimental ones."""
     rank = {ref: i for i, ref in enumerate(order)}
-    return sorted(candidates, key=lambda c: rank.get(c.ref, len(rank)))
+    return sorted(
+        candidates,
+        key=lambda c: (rank.get(c.ref, len(rank)), bool(UNSTABLE.search(c.model_name)), c.model_name),
+    )
 
 
 def plan(
