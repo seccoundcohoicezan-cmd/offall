@@ -22,14 +22,15 @@ from app.schemas import (
     ProviderOut,
     ProviderPatch,
 )
-from app.services import audit
+from app.services import audit, model_discovery
 from app.services.catalog import PROVIDERS
-from app.services.key_pool import is_usable
+from app.services.key_pool import RECOVERABLE, is_usable
 from app.services.llm import (
     NO_KEY,
     BadRequest,
     InvalidKey,
     LLMError,
+    ModelNotFound,
     QuotaExhausted,
     RateLimited,
     StreamRequest,
@@ -89,7 +90,7 @@ async def list_providers(db: DB, user: CurrentUser) -> list[ProviderOut]:
 
 @router.post("", response_model=ProviderOut, status_code=201)
 async def create_provider(
-    body: ProviderIn, db: DB, user: CurrentUser, settings: AppSettings, cipher: Cipher
+    body: ProviderIn, db: DB, user: CurrentUser, settings: AppSettings, cipher: Cipher, request: Request
 ) -> ProviderOut:
     if body.name == "mock" and not settings.enable_mock_provider:
         raise ApiError(400, "provider_disabled", "Provider mock tidak aktif di server ini.")
@@ -129,6 +130,15 @@ async def create_provider(
             )
         )
     await db.commit()
+    if not spec_info.needs_key and body.name != "mock":
+        # Keyless gateways can list their models straight away (best effort).
+        try:
+            await model_discovery.sync(
+                db, provider, NO_KEY, getattr(request.app.state, "http_transport", None)
+            )
+            await db.commit()
+        except model_discovery.DiscoveryError:
+            await db.rollback()
     return _out(provider, (await _keys(db, [provider.id]))[provider.id])
 
 
@@ -154,7 +164,7 @@ async def delete_provider(provider_id: uuid.UUID, db: DB, user: CurrentUser) -> 
 
 @router.post("/{provider_id}/keys", response_model=KeyOut, status_code=201)
 async def add_key(
-    provider_id: uuid.UUID, body: KeyIn, db: DB, user: CurrentUser, cipher: Cipher
+    provider_id: uuid.UUID, body: KeyIn, db: DB, user: CurrentUser, cipher: Cipher, request: Request
 ) -> ProviderKey:
     provider = await _owned(db, user.id, provider_id)
     secret = body.api_key.strip()
@@ -183,6 +193,16 @@ async def add_key(
     await db.flush()
     audit.record(db, user.id, "user", "key.create", str(key.id), provider=provider.name, hint=key.key_hint)
     await db.commit()
+    if provider.name != "mock":
+        # Keep the model list current right away; a failure here never blocks adding a key.
+        try:
+            await model_discovery.sync(
+                db, provider, secret or NO_KEY, getattr(request.app.state, "http_transport", None)
+            )
+            await db.commit()
+        except model_discovery.DiscoveryError:
+            await db.rollback()
+    await db.refresh(key)
     return key
 
 
@@ -302,9 +322,40 @@ async def test_key(
     def reason(exc: LLMError) -> str:
         return redact(str(exc))[:400]
 
-    ok, message = True, f"Koneksi berhasil ({model.model_name})."
+    transport = getattr(request.app.state, "http_transport", None)
+
+    async def cheapest() -> AIModel | None:
+        return await db.scalar(
+            select(AIModel)
+            .where(AIModel.provider_id == provider.id, AIModel.is_enabled.is_(True))
+            .order_by(AIModel.tier, AIModel.cost_out)
+        )
+
+    async def ping_with_self_heal() -> str:
+        """If the model was retired by the provider, refresh the model list and retry once."""
+        try:
+            await llm.ping(req)  # type: ignore[attr-defined]
+            return ""
+        except ModelNotFound:
+            old = req.model_name
+            await model_discovery.retire(db, provider.id, old)
+            try:
+                await model_discovery.sync(db, provider, req.api_key, transport)
+            except model_discovery.DiscoveryError:
+                await db.commit()
+                raise
+            replacement = await cheapest()
+            await db.commit()
+            if replacement is None or replacement.model_name == old:
+                raise
+            req.model_name = replacement.model_name
+            await llm.ping(req)  # type: ignore[attr-defined]
+            return f"Model {old} sudah tidak tersedia di provider; daftar model diperbarui otomatis. "
+
+    ok = True
     try:
-        await llm.ping(req)  # type: ignore[attr-defined]
+        note = await ping_with_self_heal()
+        message = f"{note}Koneksi berhasil ({req.model_name})."
     except InvalidKey as exc:
         key.status = KeyStatus.invalid
         ok, message = False, f"Key ditolak provider (401/403). {reason(exc)}"
@@ -318,6 +369,14 @@ async def test_key(
                 "jadi tidak ada token yang terpakai. Isi kredit di dashboard billing provider "
                 "(Anthropic: console.anthropic.com → Plans & Billing). "
                 f"Pesan provider: {provider_message(exc)}"
+            ),
+        )
+    except ModelNotFound as exc:
+        ok, message = (
+            False,
+            (
+                "Model tidak tersedia untuk key ini dan daftar model tidak bisa diperbarui. "
+                f"{provider_message(exc)}"
             ),
         )
     except BadRequest as exc:
@@ -335,30 +394,7 @@ async def test_key(
     return KeyTestOut(ok=ok, status=key.status, message=message)
 
 
-STRONG_HINTS = (
-    "opus",
-    "sonnet",
-    "gpt-4",
-    "gpt-5",
-    "o1",
-    "o3",
-    "pro",
-    "large",
-    "70b",
-    "405b",
-    "r1",
-    "qwen3-coder",
-)
-
-
-CHEAP_HINTS = ("mini", "nano", "flash", "haiku", "small", "lite", "8b", "7b", "3b", "instant", "free")
-
-
-def guess_tier(name: str) -> str:
-    low = name.lower()
-    if any(h in low for h in CHEAP_HINTS):
-        return "cheap"
-    return "strong" if any(h in low for h in STRONG_HINTS) else "cheap"
+guess_tier = model_discovery.guess_tier
 
 
 @router.post("/{provider_id}/models", status_code=201)
@@ -401,36 +437,32 @@ async def delete_model(provider_id: uuid.UUID, model_name: str, db: DB, user: Cu
 async def sync_models(
     provider_id: uuid.UUID, db: DB, user: CurrentUser, cipher: Cipher, request: Request
 ) -> ModelSyncOut:
-    """Reads GET {base_url}/models (OpenAI format) from gateways like 9Router.
-    A plain metadata read: no completion is run, so it is fine inside the request."""
+    """Reads the provider's live model list (metadata only, no completion)."""
     provider = await _owned(db, user.id, provider_id)
-    spec = PROVIDERS[provider.name]
-    base = (provider.base_url or spec.default_base_url or "").rstrip("/")
-    if not base:
-        raise ApiError(400, "no_base_url", "Isi Base URL provider dulu.")
+    secret = await _first_secret(db, provider, cipher)
+    try:
+        result = await model_discovery.sync(
+            db, provider, secret, getattr(request.app.state, "http_transport", None)
+        )
+    except model_discovery.DiscoveryError as exc:
+        raise ApiError(502, "sync_failed", str(exc)) from exc
+    audit.record(
+        db,
+        user.id,
+        "user",
+        "provider.sync_models",
+        str(provider.id),
+        added=len(result.added),
+        disabled=len(result.disabled),
+    )
+    await db.commit()
+    return ModelSyncOut(added=result.added, disabled=result.disabled, total=result.total)
+
+
+async def _first_secret(db: DB, provider: Provider, cipher: Cipher) -> str:
     key = await db.scalar(
         select(ProviderKey)
-        .where(ProviderKey.provider_id == provider.id, ProviderKey.status != KeyStatus.disabled)
+        .where(ProviderKey.provider_id == provider.id, ProviderKey.status.in_(RECOVERABLE))
         .order_by(ProviderKey.priority)
     )
-    secret = cipher.decrypt(key.api_key_encrypted) if key else NO_KEY
-    headers = {"Authorization": f"Bearer {secret}"} if secret != NO_KEY else {}
-    transport = getattr(request.app.state, "http_transport", None)
-    try:
-        async with httpx.AsyncClient(timeout=15, transport=transport) as client:
-            resp = await client.get(f"{base}/models", headers=headers)
-            resp.raise_for_status()
-            names = [str(m["id"]) for m in resp.json().get("data", []) if m.get("id")]
-    except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
-        raise ApiError(
-            502, "sync_failed", f"Gagal membaca daftar model dari {base}: {type(exc).__name__}"
-        ) from exc
-    existing = set(
-        (await db.scalars(select(AIModel.model_name).where(AIModel.provider_id == provider.id))).all()
-    )
-    added = [n for n in dict.fromkeys(names) if n not in existing][:300]
-    for name in added:
-        db.add(AIModel(provider_id=provider.id, model_name=name, display_name=name, tier=guess_tier(name)))
-    audit.record(db, user.id, "user", "provider.sync_models", str(provider.id), added=len(added))
-    await db.commit()
-    return ModelSyncOut(added=added, total=len(existing) + len(added))
+    return cipher.decrypt(key.api_key_encrypted) if key else NO_KEY

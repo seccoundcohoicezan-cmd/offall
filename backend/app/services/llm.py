@@ -44,6 +44,10 @@ class BadRequest(LLMError):
     """Request itself is wrong (e.g. context too long). Retrying another key won't help."""
 
 
+class ModelNotFound(BadRequest):
+    """The provider no longer serves this model name (retired / renamed)."""
+
+
 @dataclass
 class Usage:
     tokens_in: int = 0
@@ -72,13 +76,20 @@ def classify_error(exc: Exception) -> LLMError:
         return exc
     status = getattr(exc, "status_code", None)
     text = str(exc).lower()
+    gone = (
+        "no longer available" in text
+        or "model_not_found" in text
+        or ("model" in text and "not found" in text)
+    )
+    if status == 404 or (status not in (401, 403, 429) and gone):
+        return ModelNotFound(_short(exc))
     if status == 402 or any(h in text for h in _QUOTA_HINTS):
         return QuotaExhausted(_short(exc))
     if status == 429:
         return RateLimited(_short(exc), _retry_after(exc))
     if status in (401, 403):
         return InvalidKey(_short(exc))
-    if status in (400, 404, 413, 422):
+    if status in (400, 413, 422):
         return BadRequest(_short(exc))
     return TransientError(_short(exc))
 

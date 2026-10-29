@@ -28,10 +28,10 @@ from app.models import (
     UsageLog,
     User,
 )
-from app.services import audit, memory, router, semantic_cache, summarizer, token_saver
+from app.services import audit, memory, model_discovery, router, semantic_cache, summarizer, token_saver
 from app.services.events import JobEvents
 from app.services.key_pool import RECOVERABLE, KeyPool, NoKeyAvailable
-from app.services.llm import LLMError
+from app.services.llm import LLMError, ModelNotFound
 from app.services.notify import Event, Notifier
 
 log = logging.getLogger(__name__)
@@ -248,6 +248,8 @@ class JobRunner:
                 continue
             except LLMError as exc:
                 last_error = f"{plan.candidate.ref}: {exc}"[:500]
+                if isinstance(exc, ModelNotFound):
+                    await self._retire_model(ctx, plan)
                 continue
             await self._save_partial(ctx.job.id, output)
             cancelled = await should_stop()
@@ -292,6 +294,13 @@ class JobRunner:
             )
             await session.commit()
         return summary
+
+    async def _retire_model(self, ctx: _Context, plan: _Plan) -> None:
+        """Provider retired this model: stop routing to it (re-sync brings successors)."""
+        async with self.sessions() as session:
+            await model_discovery.retire(session, plan.provider.id, plan.candidate.model_name)
+            audit.record(session, ctx.user.id, "agent", "model.retired", plan.candidate.ref)
+            await session.commit()
 
     async def _cheap_call(
         self, plans: list[_Plan], request: list[dict[str, Any]], max_tokens: int

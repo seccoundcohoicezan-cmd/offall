@@ -29,14 +29,13 @@ async def test_9router_provider_is_keyless_and_syncs_models(client):
     assert created.status_code == 201
     provider = created.json()
     assert len(provider["keys"]) == 1 and provider["keys"][0]["key_hint"] == "tanpa key"
-    synced = await client.post(f"/api/v1/providers/{provider['id']}/models/sync", headers=headers)
-    assert synced.json() == {"added": ["cc/claude-sonnet-4.5", "gemini-flash"], "total": 2}
+    # keyless gateway: models were synced while creating the provider
     again = await client.post(f"/api/v1/providers/{provider['id']}/models/sync", headers=headers)
-    assert again.json()["added"] == []
+    assert again.json() == {"added": [], "disabled": [], "total": 2}
     models = {m["id"]: m for m in (await client.get("/api/v1/models", headers=headers)).json()}
     assert models["9router/cc/claude-sonnet-4.5"]["tier"] == "strong"
     assert models["9router/gemini-flash"]["tier"] == "cheap"
-    from app.api.providers import guess_tier
+    from app.services.model_discovery import guess_tier
 
     assert guess_tier("gh/gpt-4o-mini") == "cheap" and guess_tier("gh/gpt-4o") == "strong"
 

@@ -381,4 +381,5 @@ class CustomModelIn(BaseModel):
 
 class ModelSyncOut(BaseModel):
     added: list[str]
+    disabled: list[str] = []
     total: int

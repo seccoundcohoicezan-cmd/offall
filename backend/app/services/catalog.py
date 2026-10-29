@@ -54,8 +54,8 @@ PROVIDERS: dict[str, ProviderSpec] = {
             "Google Gemini",
             "gemini",
             models=(
-                ModelSpec("gemini-2.5-pro", "Gemini 2.5 Pro", "strong", 1.25, 10, 1_000_000),
-                ModelSpec("gemini-2.5-flash", "Gemini 2.5 Flash", "cheap", 0.3, 2.5, 1_000_000),
+                # Placeholder only: the real list is synced from the API when a key is added.
+                ModelSpec("gemini-3.8-flash", "Gemini 3.8 Flash", "cheap", 0.3, 2.5, 1_000_000),
             ),
         ),
         ProviderSpec(
