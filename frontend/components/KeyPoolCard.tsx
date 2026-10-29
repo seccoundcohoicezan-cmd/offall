@@ -258,7 +258,9 @@ export function KeyPoolCard({ provider }: { provider: Provider }) {
         })}
       </ul>
 
-      {CUSTOM_MODEL_PROVIDERS.has(provider.name) && <GatewayModels provider={provider} />}
+      {provider.name !== "mock" && (
+        <GatewayModels provider={provider} collapsible={!CUSTOM_MODEL_PROVIDERS.has(provider.name)} />
+      )}
 
       <form onSubmit={addKey} className="grid gap-2 sm:grid-cols-[1fr_2fr_1fr_auto] sm:items-end">
         <div>

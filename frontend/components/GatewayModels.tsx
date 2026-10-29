@@ -9,7 +9,13 @@ import { Badge, Button, Input, Select } from "./ui";
 import { toast } from "./ui/toast";
 
 /** Model list for gateways such as 9Router: sync from /v1/models or add names by hand. */
-export function GatewayModels({ provider }: { provider: Provider }) {
+export function GatewayModels({
+  provider,
+  collapsible = false,
+}: {
+  provider: Provider;
+  collapsible?: boolean;
+}) {
   const qc = useQueryClient();
   const [name, setName] = useState("");
   const [tier, setTier] = useState("cheap");
@@ -18,7 +24,10 @@ export function GatewayModels({ provider }: { provider: Provider }) {
     queryKey: ["models", true],
     queryFn: () => get<Model[]>("/models?include_all=true"),
   });
-  const mine = models.data?.filter((m) => m.provider === provider.name) ?? [];
+  const mine = (models.data?.filter((m) => m.provider === provider.name) ?? []).sort(
+    (a, b) => Number(b.is_enabled) - Number(a.is_enabled) || a.model_name.localeCompare(b.model_name),
+  );
+  const enabled = mine.filter((m) => m.is_enabled).length;
   const base = `/providers/${provider.id}/models`;
   const refresh = () => qc.invalidateQueries({ queryKey: ["models"] });
 
@@ -48,12 +57,14 @@ export function GatewayModels({ provider }: { provider: Provider }) {
     }
   }
 
-  return (
+  const body = (
     <div className="rounded-2xl border border-border bg-surface-2/40 p-3">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm font-medium">Model dari endpoint ({mine.length})</p>
+        <p className="text-sm font-medium">
+          Model aktif {enabled}/{mine.length}
+        </p>
         <Button size="sm" variant="outline" onClick={sync} disabled={syncing}>
-          <RefreshCw size={14} className={syncing ? "animate-spin" : ""} /> Sinkron dari /v1/models
+          <RefreshCw size={14} className={syncing ? "animate-spin" : ""} /> Sinkron model dari provider
         </Button>
       </div>
       {mine.length === 0 && (
@@ -109,5 +120,14 @@ export function GatewayModels({ provider }: { provider: Provider }) {
         </Button>
       </form>
     </div>
+  );
+  if (!collapsible) return body;
+  return (
+    <details className="group">
+      <summary className="cursor-pointer select-none text-sm text-muted hover:text-text">
+        Model ({enabled} aktif) · klik untuk lihat / sinkron
+      </summary>
+      <div className="mt-2">{body}</div>
+    </details>
   );
 }
